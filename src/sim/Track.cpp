@@ -66,17 +66,29 @@ Track TrackBuilder::example() {
     return t;
 }
 
+static bool buildRandom(uint64_t seed, double worldSize, Track& t);
+
 Track TrackBuilder::random(uint64_t seed, double worldSize) {
+    Track t;
+    for (int k = 0; k < 50; ++k) {
+        if (buildRandom(seed + 1000ull * k, worldSize, t)) { if (k) t.description += " (regenerated " + std::to_string(k) + "x)"; return t; }
+    }
+    return t;
+}
+
+// Builds a rule-compliant course: 4 separate segments (never crossing, >= 0.6 m apart), tags at their ends,
+// the next segment starting 80 cm from the tag in the indicated direction. Returns false if it does not fit.
+static bool buildRandom(uint64_t seed, double worldSize, Track& t) {
+    t = Track();
     std::mt19937_64 rng(seed);
     auto uni = [&](double a, double b) { return std::uniform_real_distribution<double>(a, b)(rng); };
-    Track t;
     t.worldSize = worldSize;
     t.start = cv::Point2d(uni(-1.0, 1.0), -worldSize / 2 + 1.2);
     t.startYawDeg = 90 + uni(-20, 20);
     t.description = "random track seed " + std::to_string(seed);
     int order[3] = {1, 2, 3};
     std::shuffle(order, order + 3, rng);
-    double half = worldSize / 2 - 0.7;
+    double half = worldSize / 2 - 1.1;      // keep the whole course well away from the net
     double x = t.start.x, y = t.start.y, psi = t.startYawDeg;
     for (int k = 0; k < 4; ++k) {
         TrackSegment best;
@@ -99,33 +111,46 @@ Track TrackBuilder::random(uint64_t seed, double worldSize) {
             }
             if (!inBounds) continue;
             bool clear = true;
-            for (size_t i = 0; i + 1 < t.segments.size() + 1 && i < t.segments.size(); ++i)
-                if (minDist(seg.pts, t.segments[i].pts, 15) < 0.5) { clear = false; break; }
+            for (size_t i = 0; i < t.segments.size(); ++i)
+                if (minDist(seg.pts, t.segments[i].pts, 0) < 0.6) { clear = false; break; }
             for (auto& tg : t.tags)
-                if (minDist(seg.pts, {cv::Point2d(tg.x, tg.y)}, 15) < 0.5) { clear = false; break; }
-            if (!clear && attempt < 30) continue;
+                if (minDist(seg.pts, {cv::Point2d(tg.x, tg.y)}, 0) < 0.6) { clear = false; break; }
+            if (std::hypot(sx - t.start.x, sy - t.start.y) < 0.6 && k > 0) clear = false;
+            if (!clear) continue;
             best = seg; bx = sx; by = sy; bpsi = spsi; ok = true;
         }
-        if (!ok) { best.pts.clear(); best.pts.emplace_back(x, y); bx = x; by = y; bpsi = psi; appendArc(best.pts, bx, by, bpsi, 1.0, 0); }
+        if (!ok) return false;
         t.segments.push_back(best);
         int id = k < 3 ? order[k] : 4;
         t.tags.push_back({id, bx, by, bpsi + uni(-15, 15)});
         double dirDeg = id == 1 ? bpsi : (id == 2 ? bpsi + 90 : (id == 3 ? bpsi - 90 : bpsi));
         cv::Point2d s = cv::Point2d(bx, by) + 0.8 * dirVec(dirDeg);
+        if (k < 3) {
+            if (std::fabs(s.x) > half || std::fabs(s.y) > half) return false;     // next start would touch the net
+            for (auto& sg : t.segments)
+                if (minDist({s}, sg.pts, 0) < 0.6) return false;                    // next start on top of a previous segment
+        }
         x = s.x; y = s.y;
         double dev = uni(0, 1) < 0.25 ? (uni(0, 1) < 0.5 ? 1 : -1) * uni(65, 85) : uni(-50, 50);
         psi = dirDeg + dev;
     }
     for (int d = 0; d < 2; ++d) {
-        TrackSegment seg;
-        double dx = uni(-half, half), dy = uni(-half, half), dpsi = uni(0, 360);
-        seg.pts.emplace_back(dx, dy);
-        appendArc(seg.pts, dx, dy, dpsi, uni(0.8, 2.0), uni(-0.8, 0.8));
-        t.distractors.push_back(seg);
-        t.distractorColors.push_back(d == 0 ? cv::Scalar(40, 40, 220) : cv::Scalar(220, 90, 30));
-        t.distractorOnStrip.push_back(d == 1);
+        for (int attempt = 0; attempt < 40; ++attempt) {
+            TrackSegment seg;
+            double dx = uni(-half, half), dy = uni(-half, half), dpsi = uni(0, 360);
+            seg.pts.emplace_back(dx, dy);
+            appendArc(seg.pts, dx, dy, dpsi, uni(0.8, 2.0), uni(-0.8, 0.8));
+            bool clear = std::fabs(dx) < half && std::fabs(dy) < half;
+            for (auto& sg : t.segments) if (clear && minDist(seg.pts, sg.pts, 0) < 0.4) clear = false;
+            for (auto& tg : t.tags) if (clear && minDist(seg.pts, {cv::Point2d(tg.x, tg.y)}, 0) < 0.5) clear = false;
+            if (!clear) continue;
+            t.distractors.push_back(seg);
+            t.distractorColors.push_back(d == 0 ? cv::Scalar(40, 40, 220) : cv::Scalar(220, 90, 30));
+            t.distractorOnStrip.push_back(d == 1);
+            break;
+        }
     }
-    return t;
+    return true;
 }
 
 cv::Point2d TrackBuilder::worldToPx(const Track& t, double pxPerM, const cv::Point2d& p) {

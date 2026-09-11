@@ -129,7 +129,18 @@ int MissionLoop::run() {
 
 bool MissionLoop::handleKey(int key) {
     switch (key) {
-        case 't': if (!nav_.flying()) nav_.start(startAtTag_); return true;
+        case 't': {
+            if (nav_.flying()) return true;
+            if (!sim_ && !opt_.dryRun) {   // preflight: telemetry and video must be alive before the motors start
+                TelloState st = drone_.state();
+                if (!st.valid) { LOG_ERROR("preflight: no telemetry from the drone (UDP 8890 blocked?) - not starting"); return true; }
+                if (src_.isLive() && src_.fps() < 10) { LOG_ERROR("preflight: video %.1f fps (< 10) - not starting", src_.fps()); return true; }
+                if (st.bat >= 0 && st.bat < nav_.params().minBattery) { LOG_ERROR("preflight: battery %d%% too low", st.bat); return true; }
+                LOG_INFO("preflight OK: battery %d%%, video %.1f fps, height %d cm", st.bat, src_.fps(), st.tof);
+            }
+            nav_.start(startAtTag_);
+            return true;
+        }
         case '0': case '1': case '2': case '3':
             startAtTag_ = key - '0';
             LOG_INFO("start-at-tag = %d (%s)", startAtTag_, startAtTag_ == 0 ? "start line" : "resume from checkpoint tag");

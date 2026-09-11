@@ -25,7 +25,7 @@ struct NavParams {
     // tag handling
     int confirmFrames = 2;
     double approachDistM = 1.4, settleS = 0.8, settleMaxS = 2.5, gapM = 0.8, lineEndAssocM = 1.0, stopOvershootM = 0.15;
-    double curvedApproachDeg = 15;
+    double curvedApproachDeg = 15, tagEndAssocM = 0.6;
     int goSpeed = 60;
     bool goYLeft = true, ignoreVisited = true;
     std::string turnMode = "sdk";
@@ -33,7 +33,7 @@ struct NavParams {
     // acquire
     double alignYawTolDeg = 8, alignLatTolCm = 12, vAcquire = 20, acquireTimeoutS = 1.5, rotateInPlaceDeg = 35, followRotateDeg = 25;
     // gap
-    double coastRc = 30, gapTimeoutS = 6, kYawHold = 1.0;
+    double coastRc = 30, gapTimeoutS = 6, kYawHold = 1.0, gapAlignDeg = 20;
     // search
     double sweepDeg = 35, sweepRate = 40, maxSearchS = 30;
     int backCm = 30, riseCm = 25;
@@ -112,6 +112,7 @@ private:
     double lastFwdTagX_ = 9.0, lookahead_ = 0;
     bool endYawValid_ = false;
     double endAbsYaw_ = 0, endYawSin_ = 0, endYawCos_ = 0, endYawStamp_ = -1e9;
+    int endYawN_ = 0;
 
     double approachStart_ = 0;
     std::vector<double> apX_, apY_, apT_;
@@ -123,6 +124,7 @@ private:
     double expectX_ = 0.8, expectY_ = 0;
     int gapYaw0_ = 0;
     bool gapYawValid_ = false;
+    double gapAlignedAt_ = -1;
 
     int searchStep_ = 0, sweepDir_ = 1, searchSweeps_ = 0, searchYaw0_ = 0;
     double searchStart_ = 0, searchStepStart_ = 0;

@@ -29,6 +29,7 @@ void NavParams::load(const Config& c) {
     settleS = c.getDouble("tag.settle_s", settleS); settleMaxS = c.getDouble("tag.settle_max_s", settleMaxS);
     gapM = c.getDouble("tag.gap_m", gapM);
     lineEndAssocM = c.getDouble("tag.line_end_assoc_m", lineEndAssocM);
+    tagEndAssocM = c.getDouble("tag.end_assoc_m", tagEndAssocM);
     stopOvershootM = c.getDouble("tag.stop_overshoot_m", stopOvershootM);
     curvedApproachDeg = c.getDouble("tag.curved_approach_deg", curvedApproachDeg);
     goSpeed = c.getInt("tag.go_speed", goSpeed);
@@ -46,6 +47,7 @@ void NavParams::load(const Config& c) {
     followRotateDeg = c.getDouble("follow.rotate_in_place_deg", followRotateDeg);
     coastRc = c.getDouble("gap.coast_rc", coastRc); gapTimeoutS = c.getDouble("gap.timeout_s", gapTimeoutS);
     kYawHold = c.getDouble("gap.k_yaw_hold", kYawHold);
+    gapAlignDeg = c.getDouble("gap.align_deg", gapAlignDeg);
     sweepDeg = c.getDouble("search.sweep_deg", sweepDeg); sweepRate = c.getDouble("search.sweep_rate", sweepRate);
     maxSearchS = c.getDouble("search.max_time_s", maxSearchS);
     backCm = c.getInt("search.back_cm", backCm); riseCm = c.getInt("search.rise_cm", riseCm);
@@ -142,11 +144,21 @@ double Navigator::altitudeUd(const TelloState& st) {
 // ---------------------------------------------------------------------------
 void Navigator::updateTagTrack(const Observation& obs) {
     const TagObservation* best = nullptr;
+    bool locked = phase_ == Phase::TagApproach || phase_ == Phase::TagManeuver;   // keep measuring the same tag
+    bool lineKnown = obs.line.valid && obs.line.mode == 1;
     for (const auto& t : obs.tags) {
         if (t.id < 1 || t.id > 4) continue;
+        if (locked && t.id != tag_.id) continue;
         if (p_.ignoreVisited && visited_.count(t.id)) continue;
-        // must be the tag at the end of the current line: reject tags far behind the visible line end
-        if (obs.line.valid && obs.line.mode == 1 && obs.line.farX > t.X + p_.lineEndAssocM) continue;
+        if (!locked) {
+            // Only the tag at the visible end of the line being followed counts: the course is compact and tags of
+            // other segments are often in view. Without a line (just lost it / coasting) accept a tag straight ahead.
+            bool assoc = false;
+            if (lineKnown) assoc = obs.line.endVisible && std::hypot(t.X - obs.line.endX, t.Y - obs.line.endY) < p_.tagEndAssocM;
+            else if (phase_ == Phase::Follow || phase_ == Phase::GapCoast || phase_ == Phase::Search || phase_ == Phase::Lost)
+                assoc = std::fabs(t.Y) < 0.4 && t.X < 1.6;
+            if (!assoc) continue;
+        }
         if (!best || t.margin > best->margin) best = &t;
     }
     if (best) {
@@ -165,7 +177,7 @@ void Navigator::updateTagTrack(const Observation& obs) {
             LOG_INFO("NAV tag ID%d confirmed at X=%.2f Y=%.2f (%s)", tag_.id, tag_.X, tag_.Y,
                      tag_.id == 1 ? "FORWARD" : tag_.id == 2 ? "LEFT" : tag_.id == 3 ? "RIGHT" : "FINISH");
         }
-    } else if (tag_.id > 0 && now_ - tag_.lastSeen > 0.6) {
+    } else if (tag_.id > 0 && now_ - tag_.lastSeen > 0.6 && phase_ != Phase::TagApproach && phase_ != Phase::TagManeuver) {
         // Track lost. A confirmed FORWARD tag that disappeared under the nose counts as passed.
         if (tag_.confirmed && tag_.id == 1 && tag_.X < blindZone_ + 0.5 && !visited_.count(1)) {
             visited_.insert(1);
@@ -183,13 +195,17 @@ void Navigator::updateTagTrack(const Observation& obs) {
 void Navigator::updateEndTangent(const Observation& obs, const TelloState& st) {
     const LineObservation& l = obs.line;
     if (!l.valid || !l.endVisible || !l.endTangentValid || !st.valid || l.endX > 2.5) return;
+    if (l.endX < blindZone_ + 0.35) return;                       // too close: the last bands are unreliable
     if (tag_.id > 0 && now_ - tag_.lastSeen < 0.5 && std::hypot(l.endX - tag_.X, l.endY - tag_.Y) > 0.7) return;
     double abs = mu::wrapDeg(st.yaw - l.endTangentDeg);
-    endYawSin_ = 0.7 * endYawSin_ + 0.3 * std::sin(mu::deg2rad(abs));
-    endYawCos_ = 0.7 * endYawCos_ + 0.3 * std::cos(mu::deg2rad(abs));
+    if (endYawValid_ && endYawN_ >= 4 && std::fabs(mu::wrapDeg(abs - endAbsYaw_)) > 35) return;   // outlier
+    if (!endYawValid_ || now_ - endYawStamp_ > 5.0) { endYawSin_ = 0; endYawCos_ = 0; endYawN_ = 0; }
+    endYawSin_ = 0.75 * endYawSin_ + 0.25 * std::sin(mu::deg2rad(abs));
+    endYawCos_ = 0.75 * endYawCos_ + 0.25 * std::cos(mu::deg2rad(abs));
     endAbsYaw_ = mu::rad2deg(std::atan2(endYawSin_, endYawCos_));
     endYawStamp_ = now_;
     endYawValid_ = true;
+    ++endYawN_;
 }
 
 double Navigator::endTangentRelDeg(const TelloState& st) const {   // turn (cw +) needed to face the line end direction
@@ -353,7 +369,9 @@ void Navigator::doFollow(const Observation& obs, const TelloState& st) {
         if (tag_.id == 1) {
             forwardTagAhead_ = true;
             lastFwdTagX_ = tag_.X;
-            if (tag_.X < p_.approachDistM && std::fabs(endTangentRelDeg(st)) > p_.curvedApproachDeg) {
+            bool bend = std::fabs(endTangentRelDeg(st)) > p_.curvedApproachDeg ||
+                        (!endYawValid_ && (std::fabs(lastLine_.headingDeg) > p_.curvedApproachDeg || std::fabs(lastLine_.curvature) > 0.8));
+            if (tag_.X < p_.approachDistM && tag_.X > blindZone_ + 0.2 && bend) {
                 pendingDir_ = 1;
                 setPhase(Phase::TagApproach, "FORWARD tag after a bend: precise maneuver");
                 return;
@@ -476,6 +494,9 @@ void Navigator::doTagManeuver(const Observation& obs, const TelloState& st) {
         return;
     }
     int dir = pendingDir_;
+    if (dir < 1 || dir > 4) { LOG_WARN("NAV maneuver without a valid tag -> acquire"); beginAcquire("no tag"); return; }
+    maneuverX_ = mu::clamp(maneuverX_, -0.3, 3.0);
+    maneuverY_ = mu::clamp(maneuverY_, -2.0, 2.0);
     int dx = mu::roundInt(maneuverX_ * 100.0), dy = mu::roundInt(maneuverY_ * 100.0);
     int goY = p_.goYLeft ? dy : -dy;
     if (std::abs(dx) >= 20 || std::abs(dy) >= 20) {
@@ -510,6 +531,7 @@ void Navigator::doTagManeuver(const Observation& obs, const TelloState& st) {
 // ---------------------------------------------------------------------------
 void Navigator::beginGap(const char* why, const TelloState& st) {
     setPhase(Phase::GapCoast, why);
+    gapAlignedAt_ = -1;
     gapYawValid_ = st.valid;
     gapYaw0_ = (endYawValid_ && now_ - endYawStamp_ < 20.0) ? mu::roundInt(endAbsYaw_) : st.yaw;
     if (endYawValid_) LOG_INFO("NAV coasting on the line end heading (%+.0f deg from current)", endTangentRelDeg(st));
@@ -518,7 +540,9 @@ void Navigator::beginGap(const char* why, const TelloState& st) {
 
 void Navigator::doGapCoast(const Observation& obs, const TelloState& st) {
     if (tagConfirmed() && tag_.id != 1 && tag_.X < p_.approachDistM) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag ahead during gap"); return; }
-    if (obs.line.valid) {
+    // the tail of the segment just finished stays visible for a moment: a short line ending right ahead is not the next one
+    bool oldTail = obs.line.valid && obs.line.endVisible && obs.line.lengthM < 0.5 && obs.line.endX < 1.2;
+    if (obs.line.valid && !oldTail) {
         if (forwardTagAhead_ && !visited_.count(1)) {   // the FORWARD tag segment is done once the next line shows up
             visited_.insert(1);
             ++segmentsDone_;
@@ -533,8 +557,20 @@ void Navigator::doGapCoast(const Observation& obs, const TelloState& st) {
         }
         return;
     }
+    double ud = altitudeUd(st);
+    double err = (gapYawValid_ && st.valid) ? mu::wrapDeg(gapYaw0_ - st.yaw) : 0.0;
+    if (std::fabs(err) > p_.gapAlignDeg) {
+        // face the line end direction before moving: the next segment (and a tag hidden behind a sharp bend) is there
+        double yawCmd = mu::clamp(p_.rcTurnK * err, -p_.rcTurnRate, p_.rcTurnRate);
+        if (std::fabs(yawCmd) < 15) yawCmd = 15 * mu::sign(err);
+        sendRc(0, 0, ud, yawCmd, true);
+        gapAlignedAt_ = -1;
+        if (now_ - phaseStart_ > 6.0) beginSearch("could not align with the line end direction", st);
+        return;
+    }
+    if (gapAlignedAt_ < 0) gapAlignedAt_ = now_;
     double yaw = 0, lr = 0;
-    if (gapYawValid_ && st.valid) yaw = mu::clamp(p_.kYawHold * mu::wrapDeg(gapYaw0_ - st.yaw), -20.0, 20.0);
+    if (gapYawValid_ && st.valid) yaw = mu::clamp(p_.kYawHold * err, -20.0, 20.0);
     if (tag_.id == 1 && tag_.confirmed && now_ - tag_.lastSeen < 0.4 && tag_.X > 0.2) {
         // keep the FORWARD tag straight ahead: the next segment starts 80 cm beyond it
         double bearing = mu::rad2deg(std::atan2(tag_.Y, tag_.X));
@@ -542,8 +578,8 @@ void Navigator::doGapCoast(const Observation& obs, const TelloState& st) {
         lr = mu::clamp(-0.5 * p_.kLat * tag_.Y * 100.0, -15.0, 15.0);
         if (gapYawValid_ && st.valid) gapYaw0_ = st.yaw;
     }
-    sendRc(lr, p_.coastRc, altitudeUd(st), yaw);
-    if (now_ - phaseStart_ > p_.gapTimeoutS) beginSearch("gap timeout", st);
+    sendRc(lr, p_.coastRc, ud, yaw);
+    if (now_ - gapAlignedAt_ > p_.gapTimeoutS) beginSearch("gap timeout", st);
 }
 
 // ---------------------------------------------------------------------------
@@ -612,8 +648,8 @@ void Navigator::doSearch(const Observation& obs, const TelloState& st) {
             }
             return;
         }
-        case 2: {   // rise once to see farther, later alternate stepping back and sweeping
-            if (!searchDidRise_ && p_.riseCm >= 20) {
+        case 2: {   // step back again after the first sweep; rise once on the third cycle; then keep stepping back
+            if (searchSweeps_ >= 3 && !searchDidRise_ && p_.riseCm >= 20) {
                 LOG_INFO("NAV search: up %d cm", p_.riseCm);
                 drone_.move("up", p_.riseCm);
                 searchDidRise_ = true;

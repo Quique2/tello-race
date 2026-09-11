@@ -337,11 +337,23 @@ void LineDetector::finalize(LineObservation& obs) const {
     else obs.headingDeg = 0;
     // direction of the line at its visible end (used to know where the next segment will be)
     obs.endTangentValid = false;
-    if (obs.endVisible && obs.pts.size() >= 3) {
-        const LinePoint& a = obs.pts[obs.pts.size() - 3];
-        const LinePoint& b = obs.pts.back();
-        double d = std::hypot(b.X - a.X, b.Y - a.Y);
-        if (d > 0.1) { obs.endTangentDeg = mu::rad2deg(std::atan2(b.Y - a.Y, b.X - a.X)); obs.endTangentValid = true; }
+    if (obs.endVisible && obs.pts.size() >= 4) {
+        // principal direction of the last 5 chain points (least squares, robust to a noisy last point)
+        size_t n0 = obs.pts.size() >= 5 ? obs.pts.size() - 5 : 0;
+        double mx = 0, my = 0; int m = 0;
+        for (size_t i = n0; i < obs.pts.size(); ++i) { mx += obs.pts[i].X; my += obs.pts[i].Y; ++m; }
+        mx /= m; my /= m;
+        double sxx = 0, sxy = 0, syy = 0;
+        for (size_t i = n0; i < obs.pts.size(); ++i) {
+            double dx = obs.pts[i].X - mx, dy = obs.pts[i].Y - my;
+            sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+        }
+        double ang = 0.5 * std::atan2(2 * sxy, sxx - syy);          // major axis of the point cloud
+        double ex = std::cos(ang), ey = std::sin(ang);
+        // orient along the chain (from the first of the points to the end)
+        double dirX = obs.pts.back().X - obs.pts[n0].X, dirY = obs.pts.back().Y - obs.pts[n0].Y;
+        if (ex * dirX + ey * dirY < 0) { ex = -ex; ey = -ey; }
+        if (std::hypot(dirX, dirY) > 0.25) { obs.endTangentDeg = mu::rad2deg(std::atan2(ey, ex)); obs.endTangentValid = true; }
     }
     // curvature: least-squares Y = a X^2 + b X + c (band mode only, X monotonic)
     obs.curvature = 0;
