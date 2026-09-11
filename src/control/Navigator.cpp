@@ -147,6 +147,8 @@ double Navigator::altitudeUd(const TelloState& st) {
 // Tag tracking: keep one candidate (the tag at the end of the line being followed) and confirm it over frames.
 // ---------------------------------------------------------------------------
 void Navigator::updateTagTrack(const Observation& obs) {
+    lastTagIds_.clear();
+    for (const auto& t : obs.tags) if (t.id >= 1 && t.id <= 4) lastTagIds_.push_back({t.id, {t.X, t.Y}});
     const TagObservation* best = nullptr;
     bool locked = phase_ == Phase::TagApproach || phase_ == Phase::TagManeuver;   // keep measuring the same tag
     bool lineKnown = obs.line.valid && obs.line.mode == 1;
@@ -387,11 +389,26 @@ void Navigator::afterBlockingCommand() {
 bool Navigator::lineNearExpectedStart(const LineObservation& line, const TelloState& st) {
     if (!acqFromManeuver_ || !st.valid || !line.valid || line.pts.empty()) return true;
     double d = mu::deg2rad(mu::wrapDeg(st.yaw - acqAbsYaw_));
-    expectX_ = (p_.gapM + acqBackM_) * std::cos(d);
-    expectY_ = (p_.gapM + acqBackM_) * std::sin(d);
+    double cx = std::cos(d), sy = std::sin(d);               // maneuver heading in the current body frame
+    expectX_ = (p_.gapM + acqBackM_) * cx;
+    expectY_ = (p_.gapM + acqBackM_) * sy;
     double dA = std::hypot(line.pts.front().X - expectX_, line.pts.front().Y - expectY_);
     double dB = std::hypot(line.pts.back().X - expectX_, line.pts.back().Y - expectY_);
-    return std::min(dA, dB) <= p_.acquireMaxOffM;
+    if (std::min(dA, dB) <= p_.acquireMaxOffM) return true;
+    // Tolerant to an error in the turn: the segment start lies on the 80 cm circle around the tag, in the half
+    // plane the tag pointed to. The tag is acqBackM_ behind the drone along the maneuver heading.
+    double tx = -acqBackM_ * cx, ty = -acqBackM_ * sy;
+    for (const auto& q : line.pts) {
+        double rx = q.X - tx, ry = q.Y - ty, r = std::hypot(rx, ry);
+        if (r < 1e-3) continue;
+        double cosAng = (rx * cx + ry * sy) / r;
+        if (std::fabs(r - p_.gapM) < 0.45 && cosAng > std::cos(mu::deg2rad(75))) return true;
+    }
+    // a line that visibly ends at a tag not yet passed is a course segment ahead of us
+    if (line.endVisible)
+        for (const auto& id : lastTagIds_)
+            if (!visited_.count(id.first) && std::hypot(id.second.first - line.endX, id.second.second - line.endY) < p_.tagEndAssocM) return true;
+    return false;
 }
 
 void Navigator::beginAcquireAfterManeuver(const char* why) {

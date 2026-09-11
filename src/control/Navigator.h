@@ -123,6 +123,7 @@ private:
     int endYawN_ = 0;
     struct EndSample { double absYaw, endX, t; };
     std::deque<EndSample> endSamples_;
+    std::vector<std::pair<int, std::pair<double, double>>> lastTagIds_;
 
     double approachStart_ = 0;
     std::vector<double> apX_, apY_, apT_;
