@@ -115,6 +115,8 @@ static bool buildRandom(uint64_t seed, double worldSize, Track& t) {
                 if (minDist(seg.pts, t.segments[i].pts, 0) < 0.6) { clear = false; break; }
             for (auto& tg : t.tags)
                 if (minDist(seg.pts, {cv::Point2d(tg.x, tg.y)}, 0) < 0.6) { clear = false; break; }
+            for (auto& tg : t.tags)
+                if (std::hypot(sx - tg.x, sy - tg.y) < 0.9) { clear = false; break; }    // tags well apart from each other
             if (std::hypot(sx - t.start.x, sy - t.start.y) < 0.6 && k > 0) clear = false;
             if (!clear) continue;
             best = seg; bx = sx; by = sy; bpsi = spsi; ok = true;

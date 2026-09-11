@@ -10,6 +10,7 @@ void NavParams::load(const Config& c) {
     takeoffSettleS = c.getDouble("mission.takeoff_settle_s", takeoffSettleS);
     maxFlightS = c.getDouble("mission.max_flight_time_s", maxFlightS);
     minBattery = c.getInt("mission.min_battery", minBattery);
+    postCommandBlindS = c.getDouble("mission.post_command_blind_s", postCommandBlindS);
     vMax = c.getDouble("follow.v_max", vMax); vMin = c.getDouble("follow.v_min", vMin);
     lookaheadM = c.getDouble("follow.lookahead_m", lookaheadM);
     kYaw = c.getDouble("follow.k_yaw", kYaw); kdYaw = c.getDouble("follow.kd_yaw", kdYaw);
@@ -32,6 +33,9 @@ void NavParams::load(const Config& c) {
     tagEndAssocM = c.getDouble("tag.end_assoc_m", tagEndAssocM);
     stopOvershootM = c.getDouble("tag.stop_overshoot_m", stopOvershootM);
     curvedApproachDeg = c.getDouble("tag.curved_approach_deg", curvedApproachDeg);
+    backAfterTurn = c.getBool("tag.back_after_turn", backAfterTurn);
+    forwardFastPath = c.getBool("tag.forward_fast_path", forwardFastPath);
+    acquireMaxOffM = c.getDouble("acquire.max_offset_m", acquireMaxOffM);
     goSpeed = c.getInt("tag.go_speed", goSpeed);
     goYLeft = c.getBool("tello.go_y_left", goYLeft);
     ignoreVisited = c.getBool("tag.ignore_visited", ignoreVisited);
@@ -149,7 +153,8 @@ void Navigator::updateTagTrack(const Observation& obs) {
     for (const auto& t : obs.tags) {
         if (t.id < 1 || t.id > 4) continue;
         if (locked && t.id != tag_.id) continue;
-        if (p_.ignoreVisited && visited_.count(t.id)) continue;
+        bool revisit = lineKnown && obs.line.endVisible && std::hypot(t.X - obs.line.endX, t.Y - obs.line.endY) < p_.tagEndAssocM;
+        if (p_.ignoreVisited && visited_.count(t.id) && !revisit) continue;
         if (!locked) {
             // Only the tag at the visible end of the line being followed counts: the course is compact and tags of
             // other segments are often in view. Without a line (just lost it / coasting) accept a tag straight ahead.
@@ -159,7 +164,11 @@ void Navigator::updateTagTrack(const Observation& obs) {
                 assoc = std::fabs(t.Y) < 0.4 && t.X < 1.6;
             if (!assoc) continue;
         }
-        if (!best || t.margin > best->margin) best = &t;
+        // prefer the tag closest to the visible line end (tags of neighbouring segments can be close), else the clearest
+        auto score = [&](const TagObservation& q) {
+            return (lineKnown && obs.line.endVisible) ? -std::hypot(q.X - obs.line.endX, q.Y - obs.line.endY) : q.margin * 0.01;
+        };
+        if (!best || score(t) > score(*best)) best = &t;
     }
     if (best) {
         if (best->id == tag_.id && now_ - tag_.lastSeen < 1.0) {
@@ -194,18 +203,54 @@ void Navigator::updateTagTrack(const Observation& obs) {
 // which can lag it by tens of degrees after a bend hidden in the camera blind zone.
 void Navigator::updateEndTangent(const Observation& obs, const TelloState& st) {
     const LineObservation& l = obs.line;
-    if (!l.valid || !l.endVisible || !l.endTangentValid || !st.valid || l.endX > 2.5) return;
-    if (l.endX < blindZone_ + 0.35) return;                       // too close: the last bands are unreliable
-    if (tag_.id > 0 && now_ - tag_.lastSeen < 0.5 && std::hypot(l.endX - tag_.X, l.endY - tag_.Y) > 0.7) return;
-    double abs = mu::wrapDeg(st.yaw - l.endTangentDeg);
-    if (endYawValid_ && endYawN_ >= 4 && std::fabs(mu::wrapDeg(abs - endAbsYaw_)) > 35) return;   // outlier
-    if (!endYawValid_ || now_ - endYawStamp_ > 5.0) { endYawSin_ = 0; endYawCos_ = 0; endYawN_ = 0; }
-    endYawSin_ = 0.75 * endYawSin_ + 0.25 * std::sin(mu::deg2rad(abs));
-    endYawCos_ = 0.75 * endYawCos_ + 0.25 * std::cos(mu::deg2rad(abs));
-    endAbsYaw_ = mu::rad2deg(std::atan2(endYawSin_, endYawCos_));
+    bool tagSeen = tag_.id > 0 && now_ - tag_.lastSeen < 0.5;
+    if (!l.valid || l.mode != 1 || l.pts.size() < 2 || !st.valid) {
+        if (tagSeen) LOG_DEBUG("endtangent: skip (valid=%d mode=%d pts=%zu)", l.valid, l.mode, l.pts.size());
+        return;
+    }
+    const LinePoint& E = l.pts.back();
+    if (E.X < blindZone_ + 0.12 || E.X > 2.6) {                   // chain end in the unreliable bottom bands, or too far
+        if (tagSeen) LOG_DEBUG("endtangent: skip (E.X=%.2f blind=%.2f)", E.X, blindZone_);
+        return;
+    }
+    const LinePoint& P = l.pts[l.pts.size() >= 3 ? l.pts.size() - 3 : 0];
+    double thetaE = mu::rad2deg(std::atan2(E.Y - P.Y, E.X - P.X));   // line direction where the visible chain ends
+    double thetaT, quality;                                          // direction at the tag / segment end, and how close
+    bool tagTracked = tag_.id > 0 && now_ - tag_.lastSeen < 0.5;
+    if (tagTracked) {
+        // The line ends at the tag. If the chain stops before it (bend hidden by the band scan limits), the hidden
+        // part is close to a circular arc: its chord bisects the tangents, so theta_T = 2 * chord - theta_E.
+        double dx = tag_.X - E.X, dy = tag_.Y - E.Y, d = std::hypot(dx, dy);
+        if (d > 1.3) { LOG_DEBUG("endtangent: skip (tag %.2f m from chain end)", d); return; }
+        if (d > 0.15) {
+            double chord = mu::rad2deg(std::atan2(dy, dx));
+            if (std::fabs(mu::wrapDeg(chord - thetaE)) > 80) { LOG_DEBUG("endtangent: skip (chord %.0f vs thetaE %.0f)", chord, thetaE); return; }
+            thetaT = mu::wrapDeg(2.0 * chord - thetaE);
+        } else {
+            thetaT = l.endTangentValid ? l.endTangentDeg : thetaE;
+        }
+        quality = d;
+    } else {
+        if (!l.endVisible || !l.endTangentValid) return;
+        thetaT = l.endTangentDeg;
+        quality = 0.5;
+    }
+    double abs = mu::wrapDeg(st.yaw - thetaT);
+    if (!endYawValid_ || now_ - endYawStamp_ > 5.0) endSamples_.clear();
+    endSamples_.push_back({abs, quality, now_});
+    while (endSamples_.size() > 15) endSamples_.pop_front();
+    // the samples taken when the chain reached closest to the tag are the most accurate: average only those
+    double best = 1e9;
+    for (auto& e : endSamples_) best = std::min(best, e.endX);
+    double sn = 0, cs = 0; int n = 0;
+    for (auto& e : endSamples_)
+        if (e.endX < best + 0.3) { sn += std::sin(mu::deg2rad(e.absYaw)); cs += std::cos(mu::deg2rad(e.absYaw)); ++n; }
+    endAbsYaw_ = mu::rad2deg(std::atan2(sn, cs));
+    endYawN_ = n;
     endYawStamp_ = now_;
     endYawValid_ = true;
-    ++endYawN_;
+    LOG_DEBUG("endtangent: thetaE=%+.0f thetaT=%+.0f q=%.2f pts=%zu tag=%d -> abs=%.0f (n=%d, yaw=%d)", thetaE, thetaT, quality,
+              l.pts.size(), tagTracked ? tag_.id : 0, endAbsYaw_, n, st.yaw);
 }
 
 double Navigator::endTangentRelDeg(const TelloState& st) const {   // turn (cw +) needed to face the line end direction
@@ -241,6 +286,15 @@ void Navigator::step(const Observation& obs, const TelloState& st) {
     now_ = clock_.now();
     lastStep_ = now_;
     blindZone_ = obs.blindZoneM > 0 && obs.blindZoneM < 5 ? obs.blindZoneM : blindZone_;
+    if (now_ < blindUntil_ && phase_ != Phase::Idle && !finished()) {
+        // video latency: the first frames after a blocking command still show the view from before it
+        double dt = mu::clamp(now_ - prevStep_, 0.0, 0.2);
+        phaseStart_ += dt; lastLineSeen_ += dt; approachStart_ += dt;
+        prevStep_ = now_;
+        sendRc(0, 0, altitudeUd(st), 0, true);
+        return;
+    }
+    prevStep_ = now_;
     if (obs.line.valid) { lastLine_ = obs.line; lastLineSeen_ = now_; }
     if (phase_ != Phase::Idle && !finished()) updateTagTrack(obs);
     updateEndTangent(obs, st);
@@ -299,11 +353,11 @@ void Navigator::doTakeoff(const TelloState& st) {
     }
     hover(true);
     clock_.sleep(p_.takeoffSettleS);
-    now_ = clock_.now();
+    afterBlockingCommand();
     if (startAtTag_ == 2 || startAtTag_ == 3) {
         pendingDir_ = startAtTag_;
         beginTurn(startAtTag_ == 2 ? -90 : 90, drone_.state());
-        if (!turning_) beginAcquire("resume: turned at checkpoint");
+        if (!turning_) beginAcquireAfterManeuver("resume: turned at checkpoint");
     } else if (startAtTag_ == 1) {
         beginGap("resume: forward checkpoint", drone_.state());
     } else {
@@ -315,9 +369,46 @@ void Navigator::doTakeoff(const TelloState& st) {
 // ACQUIRE: a line is expected ahead (start line after takeoff, or the next segment after a tag turn).
 // Rotate/translate until the line runs straight ahead, then hand over to FOLLOW.
 // ---------------------------------------------------------------------------
+void Navigator::stepBackForView() {
+    if (!p_.backAfterTurn || p_.backCm < 20 || blindZone_ <= p_.gapM - 0.3) return;
+    LOG_INFO("NAV back %d cm so the next segment start (%.1f m) leaves the blind zone (%.2f m)", p_.backCm, p_.gapM, blindZone_);
+    hover(true);
+    drone_.move("back", p_.backCm);
+    afterBlockingCommand();
+}
+
+void Navigator::afterBlockingCommand() {
+    now_ = clock_.now();
+    blindUntil_ = now_ + p_.postCommandBlindS;
+}
+
+// After a tag maneuver the next segment starts a known distance ahead along the maneuver heading; a line whose
+// ends are both far from that point belongs to another segment. Always true when not coming from a maneuver.
+bool Navigator::lineNearExpectedStart(const LineObservation& line, const TelloState& st) {
+    if (!acqFromManeuver_ || !st.valid || !line.valid || line.pts.empty()) return true;
+    double d = mu::deg2rad(mu::wrapDeg(st.yaw - acqAbsYaw_));
+    expectX_ = (p_.gapM + acqBackM_) * std::cos(d);
+    expectY_ = (p_.gapM + acqBackM_) * std::sin(d);
+    double dA = std::hypot(line.pts.front().X - expectX_, line.pts.front().Y - expectY_);
+    double dB = std::hypot(line.pts.back().X - expectX_, line.pts.back().Y - expectY_);
+    return std::min(dA, dB) <= p_.acquireMaxOffM;
+}
+
+void Navigator::beginAcquireAfterManeuver(const char* why) {
+    stepBackForView();
+    TelloState st = drone_.state();
+    acqFromManeuver_ = st.valid;
+    acqAbsYaw_ = st.yaw;
+    acqBackM_ = (p_.backAfterTurn && blindZone_ > p_.gapM - 0.3) ? p_.backCm / 100.0 : 0.0;
+    beginAcquire(why);
+    acqFromManeuver_ = st.valid;
+}
+
 void Navigator::beginAcquire(const char* why) {
+    if (phase_ != Phase::Search && phase_ != Phase::Lost && phase_ != Phase::TagManeuver) acqFromManeuver_ = false;
+    alignFrames_ = 0;
     setPhase(Phase::Acquire, why);
-    expectX_ = p_.gapM; expectY_ = 0;
+    expectX_ = p_.gapM + acqBackM_; expectY_ = 0;
     prevAngle_ = prevLat_ = 0;
     slewLr_.reset(); slewFb_.reset(); slewYaw_.reset();
 }
@@ -331,6 +422,11 @@ void Navigator::doAcquire(const Observation& obs, const TelloState& st) {
         return;
     }
     LineObservation line = obs.line;
+    if (!lineNearExpectedStart(line, st)) {   // some other segment: not the one that starts 80 cm from the tag
+        if (now_ - phaseStart_ > p_.acquireTimeoutS) { beginSearch("only lines far from the expected start", st); return; }
+        sendRc(0, 0, ud, 0);
+        return;
+    }
     if (line.mode == 2) {
         // choose the endpoint closest to where the segment should start as the entry point
         double dA = std::hypot(line.AX - expectX_, line.AY - expectY_);
@@ -356,7 +452,8 @@ void Navigator::doAcquire(const Observation& obs, const TelloState& st) {
     double lineDir = line.mode == 1 ? line.headingDeg : mu::rad2deg(std::atan2(line.BY - line.AY, line.BX - line.AX));
     bool aligned = std::fabs(angle) < p_.alignYawTolDeg && std::fabs(lat) * 100.0 < p_.alignLatTolCm && std::fabs(lineDir) < 30 &&
                    line.mode == 1 && line.pts.size() >= 2 && line.pts.front().X < blindZone_ + 0.6;
-    if (aligned) { setPhase(Phase::Follow, "aligned with line"); prevAngle_ = angle; prevLat_ = lat; }
+    alignFrames_ = aligned ? alignFrames_ + 1 : 0;
+    if (alignFrames_ >= 3) { setPhase(Phase::Follow, "aligned with line"); prevAngle_ = angle; prevLat_ = lat; alignFrames_ = 0; }
 }
 
 // ---------------------------------------------------------------------------
@@ -371,9 +468,11 @@ void Navigator::doFollow(const Observation& obs, const TelloState& st) {
             lastFwdTagX_ = tag_.X;
             bool bend = std::fabs(endTangentRelDeg(st)) > p_.curvedApproachDeg ||
                         (!endYawValid_ && (std::fabs(lastLine_.headingDeg) > p_.curvedApproachDeg || std::fabs(lastLine_.curvature) > 0.8));
-            if (tag_.X < p_.approachDistM && tag_.X > blindZone_ + 0.2 && bend) {
+            // Default: FORWARD tags get the same precise maneuver as the others (go over the tag, face the line end
+            // direction, step back, acquire the segment that starts 80 cm ahead). The fast coast is a speed option.
+            if (tag_.X < p_.approachDistM && tag_.X > blindZone_ + 0.2 && (bend || !p_.forwardFastPath)) {
                 pendingDir_ = 1;
-                setPhase(Phase::TagApproach, "FORWARD tag after a bend: precise maneuver");
+                setPhase(Phase::TagApproach, bend ? "FORWARD tag after a bend: precise maneuver" : "FORWARD tag: precise maneuver");
                 return;
             }
         } else {
@@ -401,6 +500,7 @@ void Navigator::doFollow(const Observation& obs, const TelloState& st) {
         double f = mu::clamp(1.0 - std::max(std::fabs(angle), 0.5 * std::fabs(tangent)) / p_.slowAngleDeg, 0.0, 1.0);
         double cf = mu::clamp(1.0 - curv / p_.curvSlow, 0.3, 1.0);
         double v = p_.vMin + (p_.vMax - p_.vMin) * f * cf;
+        if (acqFromManeuver_ && now_ - phaseStart_ > 1.5) acqFromManeuver_ = false;
         if (std::fabs(angle) > p_.followRotateDeg) {   // sharp bend: turn first, creep only
             v = 0;
             yaw = -mu::sign(angle) * mu::clamp(p_.kYaw * std::fabs(angle), 20.0, p_.maxYaw);
@@ -471,7 +571,7 @@ void Navigator::beginTurn(int deg, const TelloState& st) {
     hover(true);
     drone_.rotateCw(deg);
     hover(true);
-    now_ = clock_.now();
+    afterBlockingCommand();
 }
 
 void Navigator::doTagManeuver(const Observation& obs, const TelloState& st) {
@@ -489,7 +589,7 @@ void Navigator::doTagManeuver(const Observation& obs, const TelloState& st) {
         if ((turnStableSince_ > 0 && now_ - turnStableSince_ > 0.3) || now_ - turnStart_ > 6.0) {
             turning_ = false;
             hover(true);
-            beginAcquire(now_ - turnStart_ > 6.0 ? "rc turn timeout" : "rc turn complete");
+            beginAcquireAfterManeuver(now_ - turnStart_ > 6.0 ? "rc turn timeout" : "rc turn complete");
         }
         return;
     }
@@ -508,10 +608,11 @@ void Navigator::doTagManeuver(const Observation& obs, const TelloState& st) {
             if (std::abs(dx) >= 20) drone_.move(dx > 0 ? "forward" : "back", std::min(500, std::abs(dx)));
             if (std::abs(dy) >= 20) drone_.move(dy > 0 ? "left" : "right", std::min(500, std::abs(dy)));
         }
-        now_ = clock_.now();
+        afterBlockingCommand();
     }
+    if (!visited_.count(dir)) ++segmentsDone_;
+    else LOG_WARN("NAV tag ID%d reached again (segment retraced), redoing its maneuver", dir);
     visited_.insert(dir);
-    ++segmentsDone_;
     tag_ = TagTrack();
     forwardTagAhead_ = false;
     LOG_INFO("NAV reached tag ID%d (segments=%d, t=%.1fs)", dir, segmentsDone_, missionTime());
@@ -521,9 +622,9 @@ void Navigator::doTagManeuver(const Observation& obs, const TelloState& st) {
     int deg = mu::roundInt(mu::wrapDeg(rel + (dir == 2 ? -90 : (dir == 3 ? 90 : 0))));
     LOG_INFO("NAV turn for tag ID%d: line end direction %+.0f deg relative -> turn %d deg", dir, rel, deg);
     endYawValid_ = false;
-    if (std::abs(deg) < 4) { beginAcquire("already facing the next segment"); return; }
+    if (std::abs(deg) < 4) { beginAcquireAfterManeuver("already facing the next segment"); return; }
     beginTurn(deg, sNow);
-    if (!turning_) beginAcquire("turned toward next segment");
+    if (!turning_) beginAcquireAfterManeuver("turned toward next segment");
 }
 
 // ---------------------------------------------------------------------------
@@ -538,8 +639,24 @@ void Navigator::beginGap(const char* why, const TelloState& st) {
     slewFb_.reset(rc_.fb);
 }
 
+bool Navigator::visitedTagAhead(const Observation& obs) const {
+    for (const auto& t : obs.tags)
+        if (visited_.count(t.id) && t.X > blindZone_ && t.X < 1.3 && std::fabs(t.Y) < 0.5) return true;
+    return false;
+}
+
 void Navigator::doGapCoast(const Observation& obs, const TelloState& st) {
     if (tagConfirmed() && tag_.id != 1 && tag_.X < p_.approachDistM) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag ahead during gap"); return; }
+    backwardFrames_ = visitedTagAhead(obs) ? backwardFrames_ + 1 : 0;
+    if (backwardFrames_ >= 3) {
+        LOG_WARN("NAV a tag already passed is straight ahead: the segment was retraced backwards -> turning around");
+        backwardFrames_ = 0;
+        hover(true);
+        drone_.rotateCw(180);
+        afterBlockingCommand();
+        beginAcquire("turned around after retracing");
+        return;
+    }
     // the tail of the segment just finished stays visible for a moment: a short line ending right ahead is not the next one
     bool oldTail = obs.line.valid && obs.line.endVisible && obs.line.lengthM < 0.5 && obs.line.endX < 1.2;
     if (obs.line.valid && !oldTail) {
@@ -605,7 +722,7 @@ void Navigator::beginSearch(const char* why, const TelloState& st) {
 }
 
 void Navigator::doSearch(const Observation& obs, const TelloState& st) {
-    if (obs.line.valid) { hover(true); beginAcquire("line found while searching"); return; }
+    if (obs.line.valid && lineNearExpectedStart(obs.line, st)) { hover(true); beginAcquire("line found while searching"); return; }
     if (tagConfirmed() && tag_.id != 1 && tag_.X < p_.approachDistM) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag found while searching"); return; }
     if (now_ - searchStart_ > p_.maxSearchS) { hover(true); setPhase(Phase::Lost, "search exhausted, holding position"); return; }
     double ud = altitudeUd(st);
@@ -617,7 +734,8 @@ void Navigator::doSearch(const Observation& obs, const TelloState& st) {
                 LOG_INFO("NAV search: back %d cm", p_.backCm);
                 drone_.move("back", p_.backCm);
                 searchDidBack_ = true;
-                now_ = clock_.now();
+                acqBackM_ += p_.backCm / 100.0;
+                afterBlockingCommand();
             }
             searchStep_ = 1; searchStepStart_ = now_; sweepDir_ = sweepFirst_;
             sendRc(0, 0, ud, 0, true);
@@ -653,11 +771,12 @@ void Navigator::doSearch(const Observation& obs, const TelloState& st) {
                 LOG_INFO("NAV search: up %d cm", p_.riseCm);
                 drone_.move("up", p_.riseCm);
                 searchDidRise_ = true;
-                now_ = clock_.now();
+                afterBlockingCommand();
             } else if (p_.backCm >= 20) {
                 LOG_INFO("NAV search: back %d cm", p_.backCm);
                 drone_.move("back", p_.backCm);
-                now_ = clock_.now();
+                acqBackM_ += p_.backCm / 100.0;
+                afterBlockingCommand();
             }
             searchStep_ = 1; searchStepStart_ = now_; sweepDir_ = sweepFirst_;
             sendRc(0, 0, ud, 0, true);

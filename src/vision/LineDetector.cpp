@@ -338,8 +338,8 @@ void LineDetector::finalize(LineObservation& obs) const {
     // direction of the line at its visible end (used to know where the next segment will be)
     obs.endTangentValid = false;
     if (obs.endVisible && obs.pts.size() >= 4) {
-        // principal direction of the last 5 chain points (least squares, robust to a noisy last point)
-        size_t n0 = obs.pts.size() >= 5 ? obs.pts.size() - 5 : 0;
+        // principal direction of the last 3 chain points (short span: little lag on bends), curvature-corrected below
+        size_t n0 = obs.pts.size() - 3;
         double mx = 0, my = 0; int m = 0;
         for (size_t i = n0; i < obs.pts.size(); ++i) { mx += obs.pts[i].X; my += obs.pts[i].Y; ++m; }
         mx /= m; my /= m;
@@ -373,6 +373,13 @@ void LineDetector::finalize(LineObservation& obs) const {
             double a = sol[0], bb = sol[1];
             obs.curvature = 2.0 * a / std::pow(1.0 + bb * bb, 1.5);
         }
+    }
+    if (obs.endTangentValid && obs.mode == 1 && obs.pts.size() >= 4) {
+        // the 3-point direction is the chord of the last ~0.3 m: on a bend the tangent at the end is further along
+        const LinePoint& a = obs.pts[obs.pts.size() - 3];
+        const LinePoint& b = obs.pts.back();
+        double span = std::hypot(b.X - a.X, b.Y - a.Y);
+        obs.endTangentDeg = mu::wrapDeg(obs.endTangentDeg + mu::rad2deg(mu::clamp(obs.curvature, -3.0, 3.0) * 0.5 * span));
     }
 }
 

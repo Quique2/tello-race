@@ -1,4 +1,5 @@
 #pragma once
+#include <deque>
 #include <set>
 #include <string>
 #include <vector>
@@ -13,7 +14,7 @@ enum class Phase { Idle, Takeoff, Acquire, Follow, TagApproach, TagManeuver, Gap
 
 struct NavParams {
     // mission
-    double altitudeCm = 50, takeoffSettleS = 1.0, maxFlightS = 0;
+    double altitudeCm = 50, takeoffSettleS = 1.0, maxFlightS = 0, postCommandBlindS = 0.5;
     int minBattery = 25;
     // follow (pure pursuit + lateral correction)
     double vMax = 60, vMin = 15, lookaheadM = 0.45;
@@ -25,7 +26,8 @@ struct NavParams {
     // tag handling
     int confirmFrames = 2;
     double approachDistM = 1.4, settleS = 0.8, settleMaxS = 2.5, gapM = 0.8, lineEndAssocM = 1.0, stopOvershootM = 0.15;
-    double curvedApproachDeg = 15, tagEndAssocM = 0.6;
+    double curvedApproachDeg = 15, tagEndAssocM = 0.6, acquireMaxOffM = 0.75;
+    bool backAfterTurn = true, forwardFastPath = false;
     int goSpeed = 60;
     bool goYLeft = true, ignoreVisited = true;
     std::string turnMode = "sdk";
@@ -86,6 +88,11 @@ private:
     void doSearch(const Observation& obs, const TelloState& st);
     void doFinish();
     void beginAcquire(const char* why);
+    void beginAcquireAfterManeuver(const char* why);
+    void stepBackForView();
+    void afterBlockingCommand();
+    bool lineNearExpectedStart(const LineObservation& line, const TelloState& st);
+    bool visitedTagAhead(const Observation& obs) const;
     void beginGap(const char* why, const TelloState& st);
     void beginSearch(const char* why, const TelloState& st);
     void beginTurn(int deg, const TelloState& st);
@@ -94,7 +101,8 @@ private:
     IClock& clock_;
     NavParams p_;
     Phase phase_ = Phase::Idle;
-    double phaseStart_ = 0, missionStart_ = 0, lastStep_ = 0, now_ = 0;
+    double phaseStart_ = 0, missionStart_ = 0, lastStep_ = 0, now_ = 0, prevStep_ = 0, blindUntil_ = -1e9;
+    int alignFrames_ = 0;
     int segmentsDone_ = 0, startAtTag_ = 0;
     std::set<int> visited_;
     bool landRequested_ = false;
@@ -113,6 +121,8 @@ private:
     bool endYawValid_ = false;
     double endAbsYaw_ = 0, endYawSin_ = 0, endYawCos_ = 0, endYawStamp_ = -1e9;
     int endYawN_ = 0;
+    struct EndSample { double absYaw, endX, t; };
+    std::deque<EndSample> endSamples_;
 
     double approachStart_ = 0;
     std::vector<double> apX_, apY_, apT_;
@@ -121,7 +131,9 @@ private:
     int turnTargetYaw_ = 0;
     double turnStart_ = 0, turnStableSince_ = -1;
 
-    double expectX_ = 0.8, expectY_ = 0;
+    double expectX_ = 0.8, expectY_ = 0, acqBackM_ = 0;
+    bool acqFromManeuver_ = false;
+    int acqAbsYaw_ = 0, backwardFrames_ = 0;
     int gapYaw0_ = 0;
     bool gapYawValid_ = false;
     double gapAlignedAt_ = -1;
