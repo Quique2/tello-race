@@ -1,0 +1,286 @@
+#include "app/Mission.h"
+
+#include <chrono>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include "control/Navigator.h"
+#include "sim/Simulator.h"
+#include "tello/TelloDrone.h"
+#include "util/Log.h"
+#include "vision/Perception.h"
+
+namespace {
+
+std::string timestamp() {
+    std::time_t t = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", std::localtime(&t));
+    return buf;
+}
+
+class MissionLoop {
+public:
+    MissionLoop(IDrone& drone, IFrameSource& src, IClock& clock, const Config& cfg, const MissionOptions& opt, Simulator* sim)
+        : drone_(drone), src_(src), clock_(clock), cfg_(cfg), opt_(opt), sim_(sim), nav_(drone, clock, cfg) {}
+    int run();
+
+private:
+    void drawHud(cv::Mat& canvas, const Observation& obs, const TelloState& st, double fps, bool haveObs);
+    bool handleKey(int key);
+    void startRecording();
+    void stopRecording();
+    void record(const cv::Mat& frame, const Observation& obs, const TelloState& st);
+
+    IDrone& drone_;
+    IFrameSource& src_;
+    IClock& clock_;
+    const Config& cfg_;
+    MissionOptions opt_;
+    Simulator* sim_;
+    Perception perception_;
+    Navigator nav_;
+    cv::VideoWriter writer_;
+    std::ofstream csv_;
+    bool recording_ = false, showMask_ = true, showDebug_ = true, quitting_ = false;
+    int startAtTag_ = 0;
+    std::string recBase_;
+};
+
+int MissionLoop::run() {
+    std::string err;
+    if (!perception_.init(cfg_, &err)) { LOG_ERROR("perception init failed: %s", err.c_str()); return 1; }
+    startAtTag_ = opt_.startAtTag;
+    const std::string win = "tello_race";
+    if (!opt_.headless) cv::namedWindow(win, cv::WINDOW_AUTOSIZE);
+    if (opt_.record) startRecording();
+    if (opt_.autoStart) nav_.start(startAtTag_);
+    else LOG_INFO("Ready. Press 't' in the video window to take off and start (l/space = land, e = emergency, q = quit).");
+
+    SteadyClock wall;
+    Frame frame;
+    uint64_t seq = 0;
+    double lastFrameWall = wall.now(), fpsT = wall.now(), lastLoop = wall.now(), fps = 0;
+    int fpsN = 0;
+    bool haveFrame = false;
+    while (true) {
+        if (quitting_ && !nav_.flying()) break;
+        bool got = src_.latest(frame, seq, 0.25);
+        if (got) { seq = frame.seq; haveFrame = true; lastFrameWall = wall.now(); }
+        else if (src_.ended()) { LOG_INFO("end of video source"); break; }
+        TelloState st = drone_.state();
+        Observation obs;
+        if (got) obs = perception_.process(frame.image, st, frame.stamp, frame.seq);
+        else { obs.stamp = clock_.now(); obs.blindZoneM = perception_.projector().blindZoneX(); }
+        if (!sim_ && nav_.flying() && wall.now() - lastFrameWall > 2.5) {
+            LOG_ERROR("no video for 2.5 s while flying -> landing");
+            nav_.requestLand();
+        }
+        if (got || !sim_) nav_.step(obs, st);
+        if (recording_ && got) record(frame.image, obs, st);
+        if (got && ++fpsN && wall.now() - fpsT > 1.0) { fps = fpsN / (wall.now() - fpsT); fpsN = 0; fpsT = wall.now(); }
+
+        bool dump = opt_.dumpEvery > 0 && got && (seq % opt_.dumpEvery == 0);
+        if (!opt_.headless || dump) {
+            cv::Mat canvas = haveFrame ? frame.image.clone() : cv::Mat(720, 960, CV_8UC3, cv::Scalar(30, 30, 30));
+            if (showDebug_ && got) perception_.drawDebug(canvas, obs);
+            drawHud(canvas, obs, st, fps, got);
+            if (sim_) { cv::Mat top = sim_->topView(canvas.rows); cv::hconcat(canvas, top, canvas); }
+            if (dump) {
+                std::filesystem::create_directories(opt_.dumpDir);
+                char name[64];
+                snprintf(name, sizeof(name), "/frame_%06llu.png", (unsigned long long)seq);
+                cv::imwrite(opt_.dumpDir + name, canvas);
+            }
+            if (!opt_.headless) {
+                if (std::fabs(opt_.uiScale - 1.0) > 1e-3) cv::resize(canvas, canvas, cv::Size(), opt_.uiScale, opt_.uiScale);
+                cv::imshow(win, canvas);
+                int key = cv::waitKey(1);
+                if (key >= 0 && !handleKey(key & 0xff)) break;
+                if (sim_ && opt_.realtime) {
+                    double target = 1.0 / std::max(1.0, src_.fps());
+                    double dtw = wall.now() - lastLoop;
+                    if (dtw < target) wall.sleep(target - dtw);
+                    lastLoop = wall.now();
+                }
+            }
+        }
+        if (sim_ && (sim_->done() || (nav_.finished() && !sim_->isFlying()))) {
+            if (!opt_.headless) { cv::waitKey(500); }
+            break;
+        }
+        if (sim_ && clock_.now() > 600) { LOG_WARN("simulation time limit"); break; }
+    }
+    if (nav_.flying()) {
+        LOG_WARN("exiting while flying -> landing");
+        nav_.requestLand();
+        Observation o;
+        nav_.step(o, drone_.state());
+    }
+    stopRecording();
+    if (!opt_.headless) cv::destroyAllWindows();
+    return 0;
+}
+
+bool MissionLoop::handleKey(int key) {
+    switch (key) {
+        case 't': if (!nav_.flying()) nav_.start(startAtTag_); return true;
+        case '0': case '1': case '2': case '3':
+            startAtTag_ = key - '0';
+            LOG_INFO("start-at-tag = %d (%s)", startAtTag_, startAtTag_ == 0 ? "start line" : "resume from checkpoint tag");
+            return true;
+        case 'l': case ' ': nav_.requestLand(); return true;
+        case 'e': nav_.emergencyStop(); return true;
+        case 'r': if (recording_) stopRecording(); else startRecording(); return true;
+        case 'm': showMask_ = !showMask_; return true;
+        case 'd': showDebug_ = !showDebug_; return true;
+        case 'q': case 27:
+            if (nav_.flying()) { LOG_WARN("quit requested while flying -> landing first"); nav_.requestLand(); quitting_ = true; return true; }
+            return false;
+        default: return true;
+    }
+}
+
+void MissionLoop::drawHud(cv::Mat& canvas, const Observation& obs, const TelloState& st, double fps, bool haveObs) {
+    double s = (double)canvas.cols / perception_.projector().K().width;
+    cv::Mat overlay = canvas.clone();
+    cv::rectangle(overlay, cv::Rect(0, 0, canvas.cols, 118), cv::Scalar(0, 0, 0), -1);
+    cv::addWeighted(overlay, 0.55, canvas, 0.45, 0, canvas);
+    char buf[256];
+    auto put = [&](int line, const char* text, cv::Scalar col = cv::Scalar(255, 255, 255), double sc = 0.55) {
+        cv::putText(canvas, text, cv::Point(8, 20 + line * 20), cv::FONT_HERSHEY_SIMPLEX, sc, col, 1, cv::LINE_AA);
+    };
+    put(0, nav_.status().c_str(), cv::Scalar(0, 255, 255), 0.6);
+    if (st.valid) {
+        snprintf(buf, sizeof(buf), "bat=%d%%  tof=%dcm h=%dcm  yaw=%d pitch=%d roll=%d  v=(%d,%d,%d)  temp=%d-%dC", st.bat, st.tof,
+                 st.h, st.yaw, st.pitch, st.roll, st.vgx, st.vgy, st.vgz, st.templ, st.temph);
+        put(1, buf, st.bat >= 0 && st.bat < 30 ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 255, 255));
+    } else {
+        put(1, "no telemetry (state stream) - using fixed altitude for the ground model", cv::Scalar(0, 165, 255));
+    }
+    const auto& cal = perception_.calib();
+    snprintf(buf, sizeof(buf), "video %.1f fps  tag %.1fms line %.1fms  H=%.2fm pitch=%.1f blind=%.2fm  calib n=%d pitch=%.1f roll=%.1f ratio=%.2f%s",
+             fps, obs.tagMs, obs.lineMs, obs.heightM, obs.totalPitchDeg, obs.blindZoneM, cal.samples, cal.pitchDeg, cal.rollDeg,
+             cal.heightRatio, cal.applied ? " [applied]" : "");
+    put(2, buf, cv::Scalar(200, 200, 200), 0.45);
+    snprintf(buf, sizeof(buf), "keys: t=start  l/space=land  e=EMERGENCY  r=record%s  0-3=resume tag(%d)  m=mask d=debug q=quit",
+             recording_ ? "[REC]" : "", startAtTag_);
+    put(3, buf, recording_ ? cv::Scalar(0, 0, 255) : cv::Scalar(180, 180, 180), 0.45);
+    int line = 4;
+    for (size_t i = nav_.events.size() > 5 ? nav_.events.size() - 5 : 0; i < nav_.events.size(); ++i)
+        put(line++, nav_.events[i].c_str(), cv::Scalar(120, 255, 120), 0.42);
+    if (haveObs && nav_.haveTarget) {
+        double u, v;
+        if (perception_.projector().groundToPixel(nav_.targetX, nav_.targetY, u, v))
+            cv::circle(canvas, cv::Point((int)(u * s), (int)(v * s)), 9, cv::Scalar(0, 0, 255), 2);
+    }
+    if (showMask_ && haveObs) {
+        const cv::Mat& m = perception_.lineDetector().mask();
+        if (!m.empty()) {
+            cv::Mat small, smallC;
+            cv::resize(m, small, cv::Size(canvas.cols / 4, canvas.rows / 4), 0, 0, cv::INTER_NEAREST);
+            cv::cvtColor(small, smallC, cv::COLOR_GRAY2BGR);
+            smallC.copyTo(canvas(cv::Rect(canvas.cols - small.cols - 4, canvas.rows - small.rows - 4, small.cols, small.rows)));
+        }
+    }
+}
+
+void MissionLoop::startRecording() {
+    std::filesystem::create_directories(opt_.logDir);
+    recBase_ = opt_.logDir + "/run_" + timestamp();
+    int w = perception_.projector().K().width, h = perception_.projector().K().height;
+    if (!writer_.open(recBase_ + ".avi", cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, cv::Size(w, h))) {
+        LOG_WARN("cannot open video writer %s.avi", recBase_.c_str());
+    }
+    csv_.open(recBase_ + ".csv");
+    csv_ << "t,seq,phase,bat,tof,h,yaw,pitch,roll,line_valid,line_mode,near_y,heading,curvature,end_visible,tag_id,tag_x,tag_y,rc_lr,rc_fb,rc_ud,rc_yaw\n";
+    logx::setFile(recBase_ + ".log");
+    recording_ = true;
+    LOG_INFO("recording to %s.{avi,csv,log}", recBase_.c_str());
+}
+
+void MissionLoop::stopRecording() {
+    if (!recording_) return;
+    writer_.release();
+    csv_.close();
+    recording_ = false;
+    LOG_INFO("recording stopped");
+}
+
+void MissionLoop::record(const cv::Mat& frame, const Observation& obs, const TelloState& st) {
+    if (writer_.isOpened()) {
+        int w = perception_.projector().K().width, h = perception_.projector().K().height;
+        if (frame.cols == w && frame.rows == h) writer_.write(frame);
+        else { cv::Mat r; cv::resize(frame, r, cv::Size(w, h)); writer_.write(r); }
+    }
+    const TagObservation* tg = obs.tags.empty() ? nullptr : &obs.tags.front();
+    RcCommand rc = nav_.lastRc();
+    csv_ << obs.stamp << "," << obs.seq << "," << nav_.phaseName() << "," << st.bat << "," << st.tof << "," << st.h << "," << st.yaw << ","
+         << st.pitch << "," << st.roll << "," << (obs.line.valid ? 1 : 0) << "," << obs.line.mode << "," << obs.line.nearY << ","
+         << obs.line.headingDeg << "," << obs.line.curvature << "," << (obs.line.endVisible ? 1 : 0) << "," << (tg ? tg->id : -1) << ","
+         << (tg ? tg->X : 0) << "," << (tg ? tg->Y : 0) << "," << rc.lr << "," << rc.fb << "," << rc.ud << "," << rc.yaw << "\n";
+}
+
+}  // namespace
+
+bool openLiveSource(const Config& cfg, const MissionOptions& opt, IClock& clock, std::unique_ptr<IDrone>& drone,
+                    std::unique_ptr<IFrameSource>& src, std::string* err) {
+    bool tello = opt.source == "udp" || opt.source.rfind("udp://", 0) == 0;
+    if (tello) {
+        auto td = std::make_unique<TelloDrone>(cfg, clock);
+        td->setDryRun(opt.dryRun);
+        if (!td->connect(err)) return false;
+        if (!td->streamOn()) LOG_WARN("streamon was not acknowledged; trying to open the video anyway");
+        src = std::make_unique<VideoCaptureSource>(opt.source == "udp" ? td->videoUrl() : opt.source, true);
+        drone = std::move(td);
+    } else {
+        drone = std::make_unique<NullDrone>();
+        src = std::make_unique<VideoCaptureSource>(opt.source, opt.realtime);
+    }
+    return src->start(err);
+}
+
+int runFly(const Config& cfg, const MissionOptions& opt) {
+    SteadyClock clock;
+    std::unique_ptr<IDrone> drone;
+    std::unique_ptr<IFrameSource> src;
+    std::string err;
+    if (!openLiveSource(cfg, opt, clock, drone, src, &err)) { LOG_ERROR("%s", err.c_str()); return 1; }
+    if (opt.dryRun) LOG_WARN("DRY RUN: flight commands are logged, not sent");
+    MissionLoop loop(*drone, *src, clock, cfg, opt, nullptr);
+    int rc = loop.run();
+    src->stop();
+    drone->disconnect();
+    return rc;
+}
+
+int runSim(const Config& cfg, const MissionOptions& opt) {
+    int finished = 0;
+    double sumT = 0;
+    std::vector<std::string> rows;
+    for (int ep = 0; ep < std::max(1, opt.episodes); ++ep) {
+        uint64_t seed = opt.seed + ep;
+        TagDetector renderer;
+        std::string err;
+        if (!renderer.init(cfg.getString("tag.family", "tag36h11"), 2.0, 0.0, 1, false, 0.25, &err)) { LOG_ERROR("%s", err.c_str()); return 1; }
+        Simulator sim(cfg, seed, opt.track, renderer);
+        MissionLoop loop(sim, sim, sim, cfg, opt, &sim);
+        loop.run();
+        const auto& r = sim.result();
+        char row[256];
+        snprintf(row, sizeof(row), "episode %2d seed %llu: %-9s segments=%d/%zu time=%6.1fs  (%s)", ep + 1, (unsigned long long)seed,
+                 r.finished ? "FINISHED" : (r.crashed ? "CRASHED" : "FAILED"), r.segments, sim.track().tags.size(), r.time, r.reason.c_str());
+        LOG_INFO("%s", row);
+        rows.push_back(row);
+        if (r.finished) { ++finished; sumT += r.time; }
+    }
+    printf("\n==== simulation summary: %d/%d courses completed, mean time %.1fs ====\n", finished, std::max(1, opt.episodes),
+           finished ? sumT / finished : 0.0);
+    for (auto& r : rows) printf("%s\n", r.c_str());
+    return finished == std::max(1, opt.episodes) ? 0 : 2;
+}

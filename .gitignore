@@ -1,0 +1,12 @@
+build/
+build-*/
+logs/
+tags/
+*.avi
+*.mp4
+*.log
+.vs/
+.vscode/ipch/
+*.user
+CMakeUserPresets.json
+__pycache__/

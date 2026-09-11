@@ -1,0 +1,30 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "mingw-release",
+      "displayName": "MinGW GCC Release (portable toolchain in C:/dev)",
+      "generator": "Ninja",
+      "binaryDir": "C:/dev/build/tello-race",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "C:/dev/mingw64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/dev/mingw64/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "C:/dev/ninja/ninja.exe",
+        "OpenCV_DIR": "C:/dev/opencv"
+      }
+    },
+    {
+      "name": "msvc-release",
+      "displayName": "Visual Studio 2022 x64 Release (needs OpenCV_DIR)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build-msvc",
+      "cacheVariables": { "OpenCV_DIR": "C:/opencv/build" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "mingw-release", "configurePreset": "mingw-release" },
+    { "name": "msvc-release", "configurePreset": "msvc-release", "configuration": "Release" }
+  ]
+}
