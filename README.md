@@ -86,6 +86,16 @@ flight commands), `--start-at-tag N`, `--dump-every N` (save annotated frames to
   then `t`: the drone takes off, performs that tag's turn and continues (20 s penalty, but the segments count).
 * `l` or space lands at any time; `e` cuts the motors (only if a crash is imminent).
 
+## What the simulation looks like
+
+![Eight moments of a simulated run of the example course](docs/media/sim_example_course_sheet.jpg)
+
+Left half of each tile: the simulated Tello camera with the perception overlay (line chain in yellow/magenta, tag
+box, pursuit point, HUD with phase, telemetry, timers and the last state transitions; the small black panel is the
+line mask). Right half: top view of the track with the drone, its camera footprint (blue) and its trail (yellow).
+`--dump-every N` writes these annotated frames for any run; `--record` stores the raw camera video and a CSV of
+telemetry and commands, which `tello_race replay` can process again offline.
+
 ## Simulation results
 
 `tello_race sim --track random --episodes N --headless --no-realtime` prints one line per course and a summary.
