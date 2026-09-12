@@ -27,6 +27,8 @@ public:
 
     std::string videoUrl() const { return videoUrl_; }
     void setDryRun(bool on) { dryRun_ = on; }   // video + telemetry only, no flight commands
+    bool setDownvision(bool on);                // SDK 3.0: stream the belly camera (320x240 grey) instead of the front one
+    bool downvision() const { return downvision_; }
     double stateAge() const;      // seconds since the last telemetry packet (large if none)
 
 private:
@@ -47,6 +49,7 @@ private:
     std::atomic<bool> inCommand_{false};
     std::atomic<bool> flying_{false};
     bool dryRun_ = false;
+    bool downvision_ = false;
 
     std::mutex cmdMtx_;                 // serializes blocking commands
     std::mutex replyMtx_;

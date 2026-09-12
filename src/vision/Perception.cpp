@@ -98,6 +98,21 @@ Observation Perception::process(const cv::Mat& frame, const TelloState& st, doub
 
     // AprilTags on the full-resolution gray image
     std::vector<std::vector<cv::Point2f>> polys;
+    if (downward_) {   // belly camera: 320x240 grey, unknown intrinsics -> detect IDs only, no floor model
+        auto t0 = std::chrono::steady_clock::now();
+        cv::Mat gray;
+        if (frame.channels() == 3) cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY); else gray = frame;
+        lastRaw_ = tags_.detect(gray, nullptr, 0);
+        obs.tagMs = msSince(t0);
+        for (const auto& d : lastRaw_) {
+            if (d.margin < tagMinMargin_ || d.hamming > 0) continue;
+            TagObservation t;
+            t.id = d.id; t.margin = d.margin; t.center = d.center;
+            for (int k = 0; k < 4; ++k) t.corners[k] = d.corners[k];
+            obs.tags.push_back(t);
+        }
+        return obs;
+    }
     if (frameCount_ % tagEveryN_ == 0) {
         auto t0 = std::chrono::steady_clock::now();
         cv::Mat gray;
@@ -175,6 +190,17 @@ Observation Perception::process(const cv::Mat& frame, const TelloState& st, doub
 }
 
 void Perception::drawDebug(cv::Mat& frame, const Observation& obs) const {
+    if (downward_) {
+        for (const auto& t : obs.tags) {
+            for (int k = 0; k < 4; ++k)
+                cv::line(frame, cv::Point((int)t.corners[k].x, (int)t.corners[k].y),
+                         cv::Point((int)t.corners[(k + 1) % 4].x, (int)t.corners[(k + 1) % 4].y), cv::Scalar(255, 200, 0), 2);
+            cv::putText(frame, "ID" + std::to_string(t.id), cv::Point((int)t.center.x - 12, (int)t.center.y - 8), cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                        cv::Scalar(255, 200, 0), 2);
+        }
+        cv::putText(frame, "DOWNWARD CAMERA (belly) - tags only", cv::Point(8, frame.rows - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 1);
+        return;
+    }
     double s = (double)frame.cols / proj_.K().width;
     line_.drawDebug(frame, obs.line, proj_);
     for (const auto& t : obs.tags) {

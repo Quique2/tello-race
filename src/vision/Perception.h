@@ -57,6 +57,9 @@ public:
     const Calib& calib() const { return calib_; }
     // Manual calibration hook (calib-ground tool): feed a pose and get the estimate
     void setAutoCalib(bool on) { autoCalib_ = on; }
+    // Belly camera mode: tags are detected (no pose), the line/floor overlay is skipped (camera looks straight down)
+    void setDownwardCamera(bool on) { downward_ = on; resetTracking(); }
+    bool downwardCamera() const { return downward_; }
 
 private:
     void updateCalib(const TagDetection& d, const TelloState& st);
@@ -66,6 +69,7 @@ private:
     GroundProjector proj_;
     LineObservation prev_;
     bool hintValid_ = false;
+    bool downward_ = false;
     cv::Point2d hint_;
     Calib calib_;
 

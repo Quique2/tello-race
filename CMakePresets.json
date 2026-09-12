@@ -20,11 +20,33 @@
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build-msvc",
-      "cacheVariables": { "OpenCV_DIR": "C:/opencv/build" }
+      "cacheVariables": {
+        "OpenCV_DIR": "C:/opencv/build"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux / Raspberry Pi (system OpenCV, Ninja, Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "mingw-release", "configurePreset": "mingw-release" },
-    { "name": "msvc-release", "configurePreset": "msvc-release", "configuration": "Release" }
+    {
+      "name": "mingw-release",
+      "configurePreset": "mingw-release"
+    },
+    {
+      "name": "msvc-release",
+      "configurePreset": "msvc-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    }
   ]
 }

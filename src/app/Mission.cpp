@@ -48,6 +48,7 @@ private:
     cv::VideoWriter writer_;
     std::ofstream csv_;
     bool recording_ = false, showMask_ = true, showDebug_ = true, quitting_ = false;
+    uint64_t seq_ = 0;
     int startAtTag_ = 0;
     std::string recBase_;
 };
@@ -64,14 +65,15 @@ int MissionLoop::run() {
 
     SteadyClock wall;
     Frame frame;
-    uint64_t seq = 0;
-    double lastFrameWall = wall.now(), fpsT = wall.now(), lastLoop = wall.now(), fps = 0;
+    seq_ = 0;
+    if (auto* td = dynamic_cast<TelloDrone*>(&drone_)) perception_.setDownwardCamera(td->downvision());
+    double lastFrameWall = wall.now(), fpsT = wall.now(), lastLoop = wall.now(), fps = 0, lastKeepAlive = wall.now();
     int fpsN = 0;
     bool haveFrame = false;
     while (true) {
         if (quitting_ && !nav_.flying()) break;
-        bool got = src_.latest(frame, seq, 0.25);
-        if (got) { seq = frame.seq; haveFrame = true; lastFrameWall = wall.now(); }
+        bool got = src_.latest(frame, seq_, 0.25);
+        if (got) { seq_ = frame.seq; haveFrame = true; lastFrameWall = wall.now(); }
         else if (src_.ended()) { LOG_INFO("end of video source"); break; }
         TelloState st = drone_.state();
         Observation obs;
@@ -79,6 +81,10 @@ int MissionLoop::run() {
         perception_.setLineHint(nav_.lineHint(hx, hy), hx, hy);
         if (got) obs = perception_.process(frame.image, st, frame.stamp, frame.seq);
         else { obs.stamp = clock_.now(); obs.blindZoneM = perception_.projector().blindZoneX(); }
+        if (!sim_ && !nav_.flying() && wall.now() - lastKeepAlive > 8.0) {   // keep SDK mode alive while idle on the ground
+            lastKeepAlive = wall.now();
+            drone_.queryInt("battery?");
+        }
         if (!sim_ && nav_.flying() && wall.now() - lastFrameWall > 2.5) {
             LOG_ERROR("no video for 2.5 s while flying -> landing");
             nav_.requestLand();
@@ -87,7 +93,7 @@ int MissionLoop::run() {
         if (recording_ && got) record(frame.image, obs, st);
         if (got && ++fpsN && wall.now() - fpsT > 1.0) { fps = fpsN / (wall.now() - fpsT); fpsN = 0; fpsT = wall.now(); }
 
-        bool dump = opt_.dumpEvery > 0 && got && (seq % opt_.dumpEvery == 0);
+        bool dump = opt_.dumpEvery > 0 && got && (seq_ % opt_.dumpEvery == 0);
         if (!opt_.headless || dump) {
             cv::Mat canvas = haveFrame ? frame.image.clone() : cv::Mat(720, 960, CV_8UC3, cv::Scalar(30, 30, 30));
             if (showDebug_ && got) perception_.drawDebug(canvas, obs);
@@ -96,7 +102,7 @@ int MissionLoop::run() {
             if (dump) {
                 std::filesystem::create_directories(opt_.dumpDir);
                 char name[64];
-                snprintf(name, sizeof(name), "/frame_%06llu.png", (unsigned long long)seq);
+                snprintf(name, sizeof(name), "/frame_%06llu.png", (unsigned long long)seq_);
                 cv::imwrite(opt_.dumpDir + name, canvas);
             }
             if (!opt_.headless) {
@@ -151,6 +157,19 @@ bool MissionLoop::handleKey(int key) {
         case 'e': nav_.emergencyStop(); return true;
         case 'r': if (recording_) stopRecording(); else startRecording(); return true;
         case 'm': showMask_ = !showMask_; return true;
+        case 'v': {   // toggle front / belly camera (SDK 3.0 "downvision"); the stream is reopened
+            auto* td = dynamic_cast<TelloDrone*>(&drone_);
+            if (!td) { LOG_INFO("camera switch is only available on the real drone"); return true; }
+            if (nav_.flying()) { LOG_WARN("not switching cameras while flying"); return true; }
+            bool on = !td->downvision();
+            src_.stop();
+            if (td->setDownvision(on)) { perception_.setDownwardCamera(on); LOG_INFO("video: %s camera", on ? "downward (belly)" : "front"); }
+            drone_.streamOn();
+            std::string e;
+            if (!src_.start(&e)) LOG_ERROR("video restart failed: %s", e.c_str());
+            seq_ = 0;
+            return true;
+        }
         case 'd': showDebug_ = !showDebug_; return true;
         case 'q': case 27:
             if (nav_.flying()) { LOG_WARN("quit requested while flying -> landing first"); nav_.requestLand(); quitting_ = true; return true; }
@@ -181,8 +200,8 @@ void MissionLoop::drawHud(cv::Mat& canvas, const Observation& obs, const TelloSt
              fps, obs.tagMs, obs.lineMs, obs.heightM, obs.totalPitchDeg, obs.blindZoneM, cal.samples, cal.pitchDeg, cal.rollDeg,
              cal.heightRatio, cal.applied ? " [applied]" : "");
     put(2, buf, cv::Scalar(200, 200, 200), 0.45);
-    snprintf(buf, sizeof(buf), "keys: t=start  l/space=land  e=EMERGENCY  r=record%s  0-3=resume tag(%d)  m=mask d=debug q=quit",
-             recording_ ? "[REC]" : "", startAtTag_);
+    snprintf(buf, sizeof(buf), "keys: t=start  l/space=land  e=EMERGENCY  r=record%s  v=camera%s  0-3=resume tag(%d)  m=mask d=debug q=quit",
+             recording_ ? "[REC]" : "", perception_.downwardCamera() ? "[BELLY]" : "[FRONT]", startAtTag_);
     put(3, buf, recording_ ? cv::Scalar(0, 0, 255) : cv::Scalar(180, 180, 180), 0.45);
     int line = 4;
     for (size_t i = nav_.events.size() > 5 ? nav_.events.size() - 5 : 0; i < nav_.events.size(); ++i)
@@ -248,6 +267,7 @@ bool openLiveSource(const Config& cfg, const MissionOptions& opt, IClock& clock,
         auto td = std::make_unique<TelloDrone>(cfg, clock);
         td->setDryRun(opt.dryRun);
         if (!td->connect(err)) return false;
+        if (cfg.getBool("tello.downvision", false)) td->setDownvision(true);
         if (!td->streamOn()) LOG_WARN("streamon was not acknowledged; trying to open the video anyway");
         src = std::make_unique<VideoCaptureSource>(opt.source == "udp" ? td->videoUrl() : opt.source, true);
         drone = std::move(td);

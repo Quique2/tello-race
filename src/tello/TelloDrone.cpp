@@ -44,8 +44,17 @@ bool TelloDrone::connect(std::string* err) {
     return true;
 }
 
+bool TelloDrone::setDownvision(bool on) {
+    std::string reply;
+    bool ok = command(on ? "downvision 1" : "downvision 0", &reply, 3.0);
+    if (ok) downvision_ = on;
+    else LOG_WARN("downvision not accepted (%s): needs a Tello EDU / Talent with SDK 3.0 firmware", reply.c_str());
+    return ok;
+}
+
 void TelloDrone::disconnect() {
     if (!running_) return;
+    if (downvision_) { std::string r; command("downvision 0", &r, 2.0); downvision_ = false; }   // leave the front camera on
     running_ = false;
     replyCv_.notify_all();
     if (rcThread_.joinable()) rcThread_.join();
