@@ -105,3 +105,30 @@ FORWARD tags cost no time: the drone keeps following, the tag passes under the n
 2. Raise `follow.v_max` in steps of 10 while runs still complete; keep `follow.v_min` and the bend logic unchanged.
 3. Optionally switch `tag.turn_mode = rc` and raise `tag.go_speed` to 80 for faster maneuvers once the telemetry yaw is confirmed reliable.
 4. Record every run (`--record`); replay the videos with `tello_race replay --source file:logs/run_x.avi` to tune vision without spending battery.
+
+## 7. Simulation results
+
+The simulator (`tello_race sim`) renders the forward camera view of a textured carpet with the white strip,
+the dark line, the four AprilTags on letter-size paper and two lines of other colours, with 3 frames of
+video latency, sensor noise, motion blur, hover drift, imperfect `go`/turn execution and a camera tilt that
+differs from the configured one (auto-calibration has to recover it). Random tracks follow the rules: four
+separate segments with arbitrary bends, tags at their ends, the next segment starting 80 cm from the tag,
+with a random order of FORWARD/LEFT/RIGHT and up to +/-85 degrees of initial deviation of the next segment.
+
+Batch runs (`--track random --episodes 30 --headless --no-realtime`, default configuration):
+
+| Build | Courses completed | Mean time (completed) | Typical failure |
+|---|---|---|---|
+| first navigator | 7 / 10 | 37 s | corner cut on bends, coasting straight after a FORWARD tag, tags of other segments |
+| + line-end direction, strict tag association | 25 / 30 | 39 s | previous segment retraced backwards after a failed acquire |
+| + precise FORWARD maneuver, step back after turns, post-command video blind period, start gating | 29 / 30 | 52 s | chord rule noise when the chain end is very close to the tag |
+| + distance-blended end direction (current) | see README | | |
+
+The example course from the competition slides completes in 42-47 s depending on the build. Per-tag cost of
+the precise maneuver (stop, measure, `go`, turn, step back, acquire) is about 6 s; `tag.forward_fast_path = true`
+skips it for FORWARD tags when the practice track shows the fast coast is safe.
+
+Things the simulator does not capture and must be checked on the real drone: the actual stick-to-speed
+mapping (`follow.v_max` is a stick value), the real video latency, the Tello's `go` accuracy on the actual
+floor texture, ToF height noise, lighting (shadows, reflections on the white strip) and the exact colour of
+the tape. All of these are exposed as configuration values and calibration tools (see README).

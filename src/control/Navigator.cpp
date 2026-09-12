@@ -55,6 +55,7 @@ void NavParams::load(const Config& c) {
     sweepDeg = c.getDouble("search.sweep_deg", sweepDeg); sweepRate = c.getDouble("search.sweep_rate", sweepRate);
     maxSearchS = c.getDouble("search.max_time_s", maxSearchS);
     backCm = c.getInt("search.back_cm", backCm); riseCm = c.getInt("search.rise_cm", riseCm);
+    maxBackCm = c.getInt("search.max_back_cm", maxBackCm);
 }
 
 Navigator::Navigator(IDrone& drone, IClock& clock, const Config& cfg) : drone_(drone), clock_(clock) {
@@ -162,8 +163,11 @@ void Navigator::updateTagTrack(const Observation& obs) {
             // other segments are often in view. Without a line (just lost it / coasting) accept a tag straight ahead.
             bool assoc = false;
             if (lineKnown) assoc = obs.line.endVisible && std::hypot(t.X - obs.line.endX, t.Y - obs.line.endY) < p_.tagEndAssocM;
-            else if (phase_ == Phase::Follow || phase_ == Phase::GapCoast || phase_ == Phase::Search || phase_ == Phase::Lost)
-                assoc = std::fabs(t.Y) < 0.4 && t.X < 1.6;
+            else if (phase_ == Phase::Follow || phase_ == Phase::GapCoast || phase_ == Phase::Search || phase_ == Phase::Lost) {
+                // no line: only a tag straight ahead and close. The FINISH tag is never taken this way unless the
+                // three direction tags were already passed (landing early forfeits the remaining segments).
+                assoc = std::fabs(t.Y) < 0.4 && t.X < 1.6 && (t.id != 4 || segmentsDone_ >= 3);
+            }
             if (!assoc) continue;
         }
         // prefer the tag closest to the visible line end (tags of neighbouring segments can be close), else the clearest
@@ -224,12 +228,18 @@ void Navigator::updateEndTangent(const Observation& obs, const TelloState& st) {
         // part is close to a circular arc: its chord bisects the tangents, so theta_T = 2 * chord - theta_E.
         double dx = tag_.X - E.X, dy = tag_.Y - E.Y, d = std::hypot(dx, dy);
         if (d > 1.3) { LOG_DEBUG("endtangent: skip (tag %.2f m from chain end)", d); return; }
+        double thetaDirect = l.endTangentValid ? l.endTangentDeg : thetaE;   // curvature-corrected chain direction
         if (d > 0.15) {
             double chord = mu::rad2deg(std::atan2(dy, dx));
             if (std::fabs(mu::wrapDeg(chord - thetaE)) > 80) { LOG_DEBUG("endtangent: skip (chord %.0f vs thetaE %.0f)", chord, thetaE); return; }
-            thetaT = mu::wrapDeg(2.0 * chord - thetaE);
+            double thetaChord = mu::wrapDeg(2.0 * chord - thetaE);
+            // the chord rule doubles small position errors when the chain end is close to the tag: blend by distance
+            double w = mu::clamp((d - 0.2) / 0.4, 0.0, 1.0);
+            double sn = (1 - w) * std::sin(mu::deg2rad(thetaDirect)) + w * std::sin(mu::deg2rad(thetaChord));
+            double cs = (1 - w) * std::cos(mu::deg2rad(thetaDirect)) + w * std::cos(mu::deg2rad(thetaChord));
+            thetaT = mu::rad2deg(std::atan2(sn, cs));
         } else {
-            thetaT = l.endTangentValid ? l.endTangentDeg : thetaE;
+            thetaT = thetaDirect;
         }
         quality = d;
     } else {
@@ -730,6 +740,7 @@ void Navigator::beginSearch(const char* why, const TelloState& st) {
     sweepDir_ = 1;
     searchDidBack_ = false;
     searchDidRise_ = false;
+    if (now_ - lastSearchEnd_ > 8.0) searchBackTotal_ = 0;     // a fresh search after real progress may step back again
     searchYawValid_ = st.valid;
     searchYaw0_ = st.yaw;
     // a line that bent away is found by turning toward it first (pursuit angle > 0 = it went left = yaw ccw = negative state yaw)
@@ -739,7 +750,13 @@ void Navigator::beginSearch(const char* why, const TelloState& st) {
 }
 
 void Navigator::doSearch(const Observation& obs, const TelloState& st) {
-    if (obs.line.valid && lineNearExpectedStart(obs.line, st)) { hover(true); beginAcquire("line found while searching"); return; }
+    lastSearchEnd_ = now_;
+    if (obs.line.valid && lineNearExpectedStart(obs.line, st)) {
+        hover(true);
+        acqFromManeuver_ = false;      // validated here once; do not re-gate it frame by frame in ACQUIRE
+        beginAcquire("line found while searching");
+        return;
+    }
     if (tagConfirmed() && tag_.id != 1 && tag_.X < p_.approachDistM) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag found while searching"); return; }
     if (now_ - searchStart_ > p_.maxSearchS) { hover(true); setPhase(Phase::Lost, "search exhausted, holding position"); return; }
     double ud = altitudeUd(st);
@@ -747,11 +764,12 @@ void Navigator::doSearch(const Observation& obs, const TelloState& st) {
     switch (searchStep_) {
         case 0: {   // step back so the expected start point enters the visible ground area
             bool needBack = (blindZone_ > p_.gapM - 0.1 || !searchFromAcquire_) && !searchBentAway_;
-            if (needBack && !searchDidBack_ && p_.backCm >= 20) {
+            if (needBack && !searchDidBack_ && p_.backCm >= 20 && searchBackTotal_ + p_.backCm <= p_.maxBackCm) {
                 LOG_INFO("NAV search: back %d cm", p_.backCm);
                 drone_.move("back", p_.backCm);
                 searchDidBack_ = true;
                 acqBackM_ += p_.backCm / 100.0;
+                searchBackTotal_ += p_.backCm;
                 afterBlockingCommand();
             }
             searchStep_ = 1; searchStepStart_ = now_; sweepDir_ = sweepFirst_;
@@ -789,10 +807,11 @@ void Navigator::doSearch(const Observation& obs, const TelloState& st) {
                 drone_.move("up", p_.riseCm);
                 searchDidRise_ = true;
                 afterBlockingCommand();
-            } else if (p_.backCm >= 20) {
+            } else if (p_.backCm >= 20 && searchBackTotal_ + p_.backCm <= p_.maxBackCm) {
                 LOG_INFO("NAV search: back %d cm", p_.backCm);
                 drone_.move("back", p_.backCm);
                 acqBackM_ += p_.backCm / 100.0;
+                searchBackTotal_ += p_.backCm;
                 afterBlockingCommand();
             }
             searchStep_ = 1; searchStepStart_ = now_; sweepDir_ = sweepFirst_;

@@ -88,7 +88,13 @@ flight commands), `--start-at-tag N`, `--dump-every N` (save annotated frames to
 
 ## Simulation results
 
-`tello_race sim --track random --episodes N --headless --no-realtime` prints one line per course and a summary
-(see docs/STRATEGY.md for the latest numbers). The simulator renders the camera view from a textured track with
-tags, lines of other colours, video latency, sensor noise and imperfect `go`/turn execution, so it exercises
-exactly the same navigator code that flies the real drone.
+`tello_race sim --track random --episodes N --headless --no-realtime` prints one line per course and a summary.
+The simulator renders the camera view from a textured track with tags, lines of other colours, video latency,
+sensor noise and imperfect `go`/turn execution, so it exercises exactly the same navigator code that flies the
+real drone. Latest validation with the default configuration (see docs/STRATEGY.md section 7 for the history):
+
+| Run | Result |
+|---|---|
+| Example course from the slides | 4/4 segments, 46.8 s |
+| 30 random rule-compliant courses (seeds 300-329) | 30/30 completed, mean 51.3 s |
+| 30 random rule-compliant courses (seeds 400-429) | RESULT_B |

@@ -38,7 +38,7 @@ struct NavParams {
     double coastRc = 30, gapTimeoutS = 6, kYawHold = 1.0, gapAlignDeg = 20;
     // search
     double sweepDeg = 35, sweepRate = 40, maxSearchS = 30;
-    int backCm = 30, riseCm = 25;
+    int backCm = 30, riseCm = 25, maxBackCm = 60;
     void load(const Config& cfg);
 };
 
@@ -142,5 +142,6 @@ private:
     int searchStep_ = 0, sweepDir_ = 1, searchSweeps_ = 0, searchYaw0_ = 0;
     double searchStart_ = 0, searchStepStart_ = 0;
     bool searchYawValid_ = false, searchDidBack_ = false, searchDidRise_ = false, searchFromAcquire_ = false, searchBentAway_ = false;
-    int sweepFirst_ = 1;
+    int sweepFirst_ = 1, searchBackTotal_ = 0;
+    double lastSearchEnd_ = -1e9;
 };
