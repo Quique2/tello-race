@@ -39,12 +39,62 @@ Turn this Pi into a headless ground station that:
 5. Work inside `tmux new -s claude` so the laptop can attach with `tmux attach -t claude`.
 6. When something needs the user (browser logins, authorizing Tailscale, powering the drone, holding it), say
    exactly what to do and wait.
+7. Before any change that can drop the user's VNC or SSH session (network, screens, services), warn them and make
+   sure the other way in still works.
 
 ## Steps
 
+**0. Keep the Pi usable on its own: SSH, fixed address, screen switching.** Do this first.
+
+*0a. SSH as the safety net.* `sudo raspi-config nonint do_ssh 0`, confirm `ss -ltn | grep :22`. The laptop is at
+the same home network and will use `ssh <user>@192.168.1.78`.
+
+*0b. Fixed address on the home network.* The Pi is currently 192.168.1.78 (DHCP from the Infinitum router,
+gateway expected 192.168.1.254). Find the active connection and its values:
+`nmcli -t -f NAME,DEVICE,TYPE con show --active` and `nmcli dev show <device> | grep IP4`. Pin the address the Pi
+already has, only on that home profile (other networks such as a phone hotspot stay DHCP):
+
+```
+sudo nmcli con modify "<home connection name>" ipv4.method manual ipv4.addresses 192.168.1.78/24 \
+     ipv4.gateway 192.168.1.254 ipv4.dns "192.168.1.254 1.1.1.1"
+sudo nmcli con up "<home connection name>"
+```
+
+Verify `ip -4 addr`, `ip route` (default via 192.168.1.254), `ping -c 2 1.1.1.1`, and that VNC and SSH still
+work. Ask the user to also reserve 192.168.1.78 for the Pi's MAC address in the router (admin page at
+192.168.1.254) so no other device can take it while the Pi is off. Report the MAC in HANDOFF.
+
+*0c. Screens follow the VNC connection.* The Pi has a small integrated DSI display (`DSI-2`) and an HDMI output
+(`HDMI-A-1`). The user connects with TigerVNC to WayVNC, which shows only one output. Required behaviour:
+
+- at every boot/login only `DSI-2` is active, so the Pi is usable on the desk;
+- when a VNC client connects: enable `HDMI-A-1` (1920x1080, or its preferred mode), make wayvnc capture it
+  (`wayvncctl output-set HDMI-A-1`), then disable `DSI-2` so the taskbar and windows move to the screen the VNC
+  user sees and the mouse lines up;
+- when the last VNC client disconnects (`connection_count` reaches 0): enable `DSI-2`, `wayvncctl output-set DSI-2`,
+  disable `HDMI-A-1`;
+- on any failure (HDMI output absent, script crash, wayvnc restart) fall back to `DSI-2` active. Never leave both
+  screens off.
+
+Implementation notes. Check what is there: compositor (`echo $XDG_SESSION_DESKTOP`; labwc on Trixie, wayfire on
+Bookworm), `wayvnc --version` (the event stream `wayvncctl event-receive` needs 0.7 or newer; upgrade from the
+Raspberry Pi repository if older), and whether `kanshi` runs (`pgrep -a kanshi`; the Control Centre's Screens
+panel saves its layout there). Install `wlr-randr` and `jq`. If kanshi manages the outputs, define two profiles
+`local` (DSI-2 on, HDMI-A-1 off) and `remote` (HDMI-A-1 on, DSI-2 off) in `~/.config/kanshi/config` and switch with
+`kanshictl switch local|remote`, so kanshi never fights the script; otherwise use `wlr-randr --output <name>
+--on|--off [--mode 1920x1080]` directly. Write `~/.local/bin/vnc-screens.sh`: apply `local`, then loop over
+`wayvncctl event-receive | jq --unbuffered -r '[.method, .params.connection_count] | @tsv'`: `client-connected` ->
+`remote`; `client-disconnected` with count 0 -> `local`; if `HDMI-A-1` is missing from `wlr-randr` output, stay on
+`local` and log it. Run it as a systemd user service `~/.config/systemd/user/vnc-screens.service` (`After=wayvnc.service`,
+`PartOf=graphical-session.target`, `WantedBy=graphical-session.target`, `Restart=always`, `RestartSec=2`,
+`ExecStopPost=` that re-enables DSI-2), enabled with `systemctl --user enable --now vnc-screens`. Test: connect and
+disconnect TigerVNC from the laptop three times (the user does it), reboot, check that only DSI-2 is on after
+login. Document the manual recovery in HANDOFF: over SSH, `wlr-randr --output DSI-2 --on` (run with the session's
+`WAYLAND_DISPLAY`, for example `WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000`).
+
 **A. Inventory.** Report OS (`cat /etc/os-release`, `uname -a`), CPU and RAM, network interfaces (`ip -br addr`,
-`nmcli dev status`), whether a monitor is attached, extra Wi-Fi adapters (`lsusb`, `iw dev`), Ethernet link state,
-free disk. Install the tools:
+`nmcli dev status`), whether a monitor is attached to HDMI, extra Wi-Fi adapters (`lsusb`, `iw dev`), Ethernet
+link state, free disk. Install the tools:
 
 ```
 sudo apt update && sudo apt install -y git gh build-essential cmake ninja-build pkg-config libopencv-dev ffmpeg tmux
@@ -66,15 +116,12 @@ Expect `FINISHED segments=4/4`. Note the wall time. Report the compiler and Open
 simulator result in HANDOFF.
 
 **C. Tailscale.** Install with the official script, then `sudo tailscale up --ssh` and give the user the login URL
-to authorize. Report `tailscale ip -4` and the MagicDNS name from `tailscale status`. Make sure normal SSH also
-works (`sudo raspi-config nonint do_ssh 0`). The laptop will use `ssh <user>@<tailscale-ip>` and
-`tmux attach -t claude`.
+to authorize. Report `tailscale ip -4` and the MagicDNS name from `tailscale status`. The laptop will use
+`ssh <user>@<tailscale-ip>` and `tmux attach -t claude`.
 
-**D. VNC for the user.** `sudo raspi-config nonint do_vnc 0` (wayvnc on Bookworm, port 5900, Pi user password).
-If the Pi runs without a monitor and the desktop does not come up, install a virtual desktop instead:
-`sudo apt install -y tigervnc-standalone-server`, `vncpasswd`, `vncserver :1 -geometry 1600x900 -localhost no`
-(port 5901). Report which one works and the port. The laptop opens it with TigerVNC at `<tailscale-ip>:<port>`.
-Keep a terminal with the `claude` tmux session visible on that desktop so the user can watch you work.
+**D. VNC.** VNC is already enabled (WayVNC, port 5900). After step 0c it shows `HDMI-A-1` while connected. If the
+user ever wants both screens visible at once, a second server `wayvnc -o DSI-2 0.0.0.0 5901` gives the small
+screen on port 5901. Keep a terminal with the `claude` tmux session visible so the user can watch you work.
 
 **E. Drone Wi-Fi and internet at the same time.** Pick the best option this hardware allows, in this order:
 
@@ -121,6 +168,7 @@ ground station in tmux at boot, so the Pi only needs power at the venue.
 
 ## Reporting
 
-Append to `docs/HANDOFF.md` under `### <date> (pi)`: OS, compiler and OpenCV versions; Tailscale IP and name;
-VNC port; Linux build fixes; simulator result; the network layout chosen and the `ip route` check; Funnel URL
-(no token); open issues and what you need from the laptop side. Commit with `pi:` prefixed messages and push.
+Append to `docs/HANDOFF.md` under `### <date> (pi)`: OS, compiler and OpenCV versions; the Pi's MAC and fixed
+address; how the screen switching was implemented and the recovery command; Tailscale IP and name; Linux build
+fixes; simulator result; the network layout chosen and the `ip route` check; Funnel URL (no token); open issues and
+what you need from the laptop side. Commit with `pi:` prefixed messages and push.
