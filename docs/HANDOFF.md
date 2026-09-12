@@ -26,12 +26,32 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 (pi) setup, Linux build, scripts
+* Pi: Raspberry Pi 5 Model B Rev 1.1, 4 cores, 16 GB RAM, 57 GB SD (46 GB free). Debian GNU/Linux 13 (trixie),
+  kernel 6.18.34+rpt-rpi-2712 aarch64, labwc desktop (rpd-labwc), wayvnc 0.9.1, kanshi 1.5.1. No extra Wi-Fi adapter.
+  Username **quiquepi**, hostname QuiquePi. SSH enabled (port 22). eth0 = laptop ICS (still 192.168.137.168 by DHCP
+  at the time of writing; pinning to 192.168.137.10 is pending the user's go), wlan0 = home Wi-Fi (DHCP, untouched).
+* Toolchain: gcc (Debian 14.2.0-19), cmake 3.31.6, ninja, system OpenCV **4.10.0** (Trixie, not 4.6).
+* Linux build: `cmake --preset linux-release && cmake --build --preset linux-release` compiled with **no source
+  changes needed** (only CMake deprecation warnings from civetweb's CMakeLists).
+* Smoke test: `./build/tello_race sim --headless --no-realtime --track example --episodes 1 --seed 1` ->
+  `FINISHED segments=4/4 time=46.8s` (30 s wall clock on the Pi).
+* Drone profile created: `nmcli con add type wifi ifname wlan0 con-name tello ssid TELLO-FE18DB` with
+  `ipv4.never-default yes`, `ipv6.method disabled`, `autoconnect no`. No firewall on the Pi (nftables empty, no ufw).
+* New scripts: `scripts/pi/drone_wifi.sh up|down|status` (joins/leaves the drone network, prints routes, drone ping,
+  internet, Tailscale) and `scripts/pi/ground_station.sh [start|stop|status] [tello_race options]` (runs
+  `tello_race fly --headless --set web.enabled=1` in tmux window `claude:drone`, enables Funnel on 8080, prints URLs).
+* Removed the operator token value from the 2026-09-12 laptop entry below (rule: never in HANDOFF). It is still in
+  git history; consider changing it in `config/default.ini` before the page is public.
+* In progress: Tailscale (installed 1.102.4, waiting for the user to authorize), fixed eth0 address, screen
+  switching test, Funnel.
+
 ### 2026-09-12 (laptop) tokens and Pi deployment plan
 * Network layout chosen on 2026-09-12: the Pi is wired to the laptop's Ethernet port and the laptop shares its
   Wi-Fi internet over the cable (Windows Internet Connection Sharing, laptop = 192.168.137.1, service set to start
   automatically). The Pi pins 192.168.137.10 on eth0 (step 0b of PI_PROMPT.md); its Wi-Fi is free for the drone.
   The laptop reaches the Pi at 192.168.137.10 (VNC 5900, SSH 22, web page 8080) with no internet hop.
-* Tokens decided by the user: operator (full access) `quiquepro`, viewer `watch`, both in `config/default.ini`
+* Tokens decided by the user: operator (full access) `[web] token` and viewer `watch`, both in `config/default.ini`
   (private repo; never paste the operator token into HANDOFF, logs or a shared link).
 * `docs/PI_PROMPT.md` is the complete brief for the Pi's Claude Code session: install, Linux build, Tailscale
   (`--ssh`), VNC, drone Wi-Fi + internet at the same time (`ipv4.never-default`), Funnel for port 8080, first
