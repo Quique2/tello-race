@@ -418,6 +418,9 @@ bool Navigator::lineNearExpectedStart(const LineObservation& line, const TelloSt
     if (line.endVisible)
         for (const auto& id : lastTagIds_)
             if (!visited_.count(id.first) && std::hypot(id.second.first - line.endX, id.second.second - line.endY) < p_.tagEndAssocM) return true;
+    LOG_DEBUG("gate: reject line A=(%.2f,%.2f) B=(%.2f,%.2f) mode=%d n=%zu expect=(%.2f,%.2f) tag=(%.2f,%.2f) dA=%.2f dB=%.2f",
+              line.pts.front().X, line.pts.front().Y, line.pts.back().X, line.pts.back().Y, line.mode, line.pts.size(), expectX_, expectY_,
+              tx, ty, dA, dB);
     return false;
 }
 
@@ -434,6 +437,7 @@ void Navigator::beginAcquireAfterManeuver(const char* why) {
 void Navigator::beginAcquire(const char* why) {
     if (phase_ != Phase::Search && phase_ != Phase::Lost && phase_ != Phase::TagManeuver) acqFromManeuver_ = false;
     alignFrames_ = 0;
+    gateFailStart_ = -1;
     setPhase(Phase::Acquire, why);
     expectX_ = p_.gapM + acqBackM_; expectY_ = 0;
     prevAngle_ = prevLat_ = 0;
@@ -450,10 +454,13 @@ void Navigator::doAcquire(const Observation& obs, const TelloState& st) {
     }
     LineObservation line = obs.line;
     if (!lineNearExpectedStart(line, st)) {   // some other segment: not the one that starts 80 cm from the tag
-        if (now_ - phaseStart_ > p_.acquireTimeoutS) { beginSearch("only lines far from the expected start", st); return; }
+        // two lines in view can alternate between frames: give up only after a continuous run of rejected frames
+        if (gateFailStart_ < 0) gateFailStart_ = now_;
+        if (now_ - gateFailStart_ > p_.acquireTimeoutS) { beginSearch("only lines far from the expected start", st); return; }
         sendRc(0, 0, ud, 0);
         return;
     }
+    gateFailStart_ = -1;
     if (line.mode == 2) {
         // choose the endpoint closest to where the segment should start as the entry point
         double dA = std::hypot(line.AX - expectX_, line.AY - expectY_);

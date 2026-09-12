@@ -57,15 +57,17 @@ public:
     const LineParams& params() const { return p_; }
 
     // maskPolys: full-resolution polygons (e.g. AprilTags) to exclude from the line mask
+    // hint: ground point (body frame) where the wanted line is expected to start (e.g. 80 cm after a tag turn)
     LineObservation detect(const cv::Mat& bgr, const GroundProjector& proj,
-                           const std::vector<std::vector<cv::Point2f>>& maskPolys, const LineObservation* prev);
+                           const std::vector<std::vector<cv::Point2f>>& maskPolys, const LineObservation* prev,
+                           const cv::Point2d* hint = nullptr);
     const cv::Mat& mask() const { return mask_; }
     double scale() const { return scale_; }
     void drawDebug(cv::Mat& frame, const LineObservation& obs, const GroundProjector& proj) const;
 
 private:
     void buildMask(const cv::Mat& bgr, const GroundProjector& proj, const std::vector<std::vector<cv::Point2f>>& polys);
-    bool scanBands(const GroundProjector& proj, const LineObservation* prev, LineObservation& obs);
+    bool scanBands(const GroundProjector& proj, const LineObservation* prev, const cv::Point2d* hint, LineObservation& obs);
     bool scanComponents(const GroundProjector& proj, LineObservation& obs, const cv::Point2d& expect);
     void finalize(LineObservation& obs) const;
     bool lineContinuesBeyond(const GroundProjector& proj, const std::vector<LinePoint>& chain) const;

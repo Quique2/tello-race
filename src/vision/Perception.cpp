@@ -168,7 +168,7 @@ Observation Perception::process(const cv::Mat& frame, const TelloState& st, doub
 
     // Line
     auto t1 = std::chrono::steady_clock::now();
-    obs.line = line_.detect(frame, proj_, polys, prev_.valid ? &prev_ : nullptr);
+    obs.line = line_.detect(frame, proj_, polys, prev_.valid ? &prev_ : nullptr, hintValid_ ? &hint_ : nullptr);
     obs.lineMs = msSince(t1);
     prev_ = obs.line;
     return obs;

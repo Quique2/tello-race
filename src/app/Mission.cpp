@@ -75,6 +75,8 @@ int MissionLoop::run() {
         else if (src_.ended()) { LOG_INFO("end of video source"); break; }
         TelloState st = drone_.state();
         Observation obs;
+        double hx = 0, hy = 0;
+        perception_.setLineHint(nav_.lineHint(hx, hy), hx, hy);
         if (got) obs = perception_.process(frame.image, st, frame.stamp, frame.seq);
         else { obs.stamp = clock_.now(); obs.blindZoneM = perception_.projector().blindZoneX(); }
         if (!sim_ && nav_.flying() && wall.now() - lastFrameWall > 2.5) {

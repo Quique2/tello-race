@@ -44,6 +44,7 @@ public:
     bool init(const Config& cfg, std::string* err);
     Observation process(const cv::Mat& frame, const TelloState& st, double stamp, uint64_t seq);
     void resetTracking() { prev_ = LineObservation(); }
+    void setLineHint(bool valid, double X, double Y) { hintValid_ = valid; hint_ = cv::Point2d(X, Y); }
     void drawDebug(cv::Mat& frame, const Observation& obs) const;
 
     GroundProjector& projector() { return proj_; }
@@ -64,6 +65,8 @@ private:
     LineDetector line_;
     GroundProjector proj_;
     LineObservation prev_;
+    bool hintValid_ = false;
+    cv::Point2d hint_;
     Calib calib_;
 
     std::string heightSource_ = "tof";

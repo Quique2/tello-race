@@ -111,7 +111,7 @@ void LineDetector::buildMask(const cv::Mat& bgr, const GroundProjector& proj,
 
 // Scan horizontal bands placed at fixed ground distances ahead of the drone; in each band pick the
 // mask run whose projected width is plausible for the line and whose lateral position continues the chain.
-bool LineDetector::scanBands(const GroundProjector& proj, const LineObservation* prev, LineObservation& obs) {
+bool LineDetector::scanBands(const GroundProjector& proj, const LineObservation* prev, const cv::Point2d* hint, LineObservation& obs) {
     bandDbg_.clear();
     double blind = proj.blindZoneX();
     if (blind > 20) return false;
@@ -143,7 +143,9 @@ bool LineDetector::scanBands(const GroundProjector& proj, const LineObservation*
         BandDebug dbg{row, runs, -1};
 
         if (!haveExpect) {
-            if (prev && prev->valid && prev->lateralAt(X, expectY)) haveExpect = true;
+            // a hint (expected segment start) wins; a previous chain is only trusted near where it was seen
+            if (hint) { expectY = hint->y; haveExpect = true; }
+            else if (prev && prev->valid && prev->pts.front().X < X + 0.6 && prev->lateralAt(X, expectY)) haveExpect = true;
             else expectY = 0;
         }
         int best = -1, validRuns = 0;
@@ -384,15 +386,16 @@ void LineDetector::finalize(LineObservation& obs) const {
 }
 
 LineObservation LineDetector::detect(const cv::Mat& bgr, const GroundProjector& proj,
-                                     const std::vector<std::vector<cv::Point2f>>& maskPolys, const LineObservation* prev) {
+                                     const std::vector<std::vector<cv::Point2f>>& maskPolys, const LineObservation* prev,
+                                     const cv::Point2d* hint) {
     LineObservation obs;
     buildMask(bgr, proj, maskPolys);
     obs.maskPixels = cv::countNonZero(mask_);
     if (obs.maskPixels < p_.minComponentArea) return obs;
-    bool bandsOk = scanBands(proj, prev, obs);
+    bool bandsOk = scanBands(proj, prev, hint, obs);
     if (!bandsOk) {
         LineObservation comp;
-        cv::Point2d expect = (prev && prev->valid) ? cv::Point2d(prev->nearX, prev->nearY) : cv::Point2d(0.8, 0.0);
+        cv::Point2d expect = hint ? *hint : (prev && prev->valid) ? cv::Point2d(prev->nearX, prev->nearY) : cv::Point2d(0.8, 0.0);
         if (scanComponents(proj, comp, expect)) obs = comp;
     }
     if (obs.valid) finalize(obs);

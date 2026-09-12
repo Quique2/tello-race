@@ -63,6 +63,11 @@ public:
     bool finished() const { return phase_ == Phase::Landed || phase_ == Phase::Aborted; }
     bool flying() const { return phase_ != Phase::Idle && !finished(); }
     const NavParams& params() const { return p_; }
+    // where the next line is expected (body frame) while acquiring after a tag maneuver
+    bool lineHint(double& X, double& Y) const {
+        if (!acqFromManeuver_ || (phase_ != Phase::Acquire && phase_ != Phase::Search)) return false;
+        X = expectX_; Y = expectY_; return true;
+    }
 
     double targetX = 0, targetY = 0;
     bool haveTarget = false;
@@ -103,6 +108,7 @@ private:
     Phase phase_ = Phase::Idle;
     double phaseStart_ = 0, missionStart_ = 0, lastStep_ = 0, now_ = 0, prevStep_ = 0, blindUntil_ = -1e9;
     int alignFrames_ = 0;
+    double gateFailStart_ = -1;
     int segmentsDone_ = 0, startAtTag_ = 0;
     std::set<int> visited_;
     bool landRequested_ = false;
