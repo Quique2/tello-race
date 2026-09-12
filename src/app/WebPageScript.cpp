@@ -2,7 +2,7 @@
 extern const char* kPageScript;
 const char* kPageScript = R"HTML(<script>
 const $=id=>document.getElementById(id);
-let tok=localStorage.getItem('tello_token')||'';$('tok').value=tok;
+let tok=localStorage.getItem('tello_token')||'';const qtok=new URLSearchParams(location.search).get('token');if(qtok){tok=qtok;localStorage.setItem('tello_token',tok);history.replaceState(null,'',location.pathname);}$('tok').value=tok;
 $('bTok').onclick=()=>{tok=$('tok').value.trim();localStorage.setItem('tello_token',tok);location.reload();};
 const q=tok?('?token='+encodeURIComponent(tok)):'';
 let ws=null,role='viewer',cam='',mode='mission',flying=false;
@@ -44,7 +44,7 @@ function connect(){const proto=location.protocol==='https:'?'wss://':'ws://';ws=
  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data);}catch(x){return;}
   if(m.hello){role=m.role;$('role').textContent=role;document.body.classList.toggle('viewer',role!=='operator');return;}
   if(m.error){alert(m.error);return;}
-  flying=!!m.flying;if(m.mode!==mode)setMode(m.mode);
+  flying=!!m.flying;$('bStart').textContent=flying?'START (from hover)':'START (take off)';if(m.mode!==mode)setMode(m.mode);
   $('phase').textContent=m.phase+(m.mode==='manual'?' (manual)':'');$('seg').textContent=m.seg;$('t').textContent=m.t.toFixed(1)+' s';
   $('drone').textContent=m.drone;const b=$('bat');b.textContent=m.telemetry?(m.bat+' %'):'no telemetry';b.classList.toggle('low',m.telemetry&&m.bat<30);
   $('h').textContent=m.telemetry?(m.tof+' cm'):'-';$('temp').textContent=m.telemetry?(m.templ+'-'+m.temph+' C'):'-';

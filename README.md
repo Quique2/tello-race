@@ -91,6 +91,12 @@ airborne stops the sticks; START then runs the mission from the current hover. S
 releases the navigator immediately (the drone hovers). LAND and EMERGENCY work in both modes; only the operator
 token can change modes or move the drone, a viewer only watches. Manual flight over a Funnel link adds internet
 latency (typically 100-300 ms) on top of the video delay, so keep the speed slider low when flying remotely.
+A link of the form `https://<host>/?token=<viewer token>` stores the token in the browser once, so spectators
+only need the link.
+
+| Mission mode (desktop) | Manual mode (desktop) | Manual mode (phone) |
+|---|---|---|
+| ![mission](docs/media/web_mission.jpg) | ![manual](docs/media/web_manual.jpg) | ![phone](docs/media/web_manual_phone.jpg) |
 
 ## Before the competition: calibration checklist (practice track)
 
