@@ -60,6 +60,16 @@ from that checkpoint tag on the next start (`0` = start line), `m` mask, `d` deb
 Useful options: `--set section.key=value` (any config value, repeatable), `--dry-run` (video + telemetry, no
 flight commands), `--start-at-tag N`, `--dump-every N` (save annotated frames to `logs/frames`).
 
+## First contact with the real drone (verified 2026-09-12)
+
+Tello Talent `TELLO-FE18DB`, no expansion kit mounted, direct Wi-Fi mode: `tello_race telemetry` entered SDK mode on
+the first attempt (`sdk=30`), telemetry arrived at 10 Hz and the 960x720 video decoded at ~24 fps (the H.264 warnings
+printed during the first second are the decoder waiting for the first keyframe and are harmless). Windows created
+inbound allow rules for the program on the Public profile. `scripts\wifi_tello.ps1` joins the drone's network and
+`scripts\wifi_tello.ps1 -Back` returns to the home network. Notes from the manual: the aircraft's Micro USB port
+is charge-only (1.5 A adapter, aircraft switched off), and a yellow blinking LED means "no client connected" /
+"no vision positioning", not an error; it turns purple once the SDK is connected.
+
 ## Before the competition: calibration checklist (practice track)
 
 1. **Connectivity**: `tello_race telemetry --duration 10`. Both "telemetry: OK" and a video fps > 20 are required.
