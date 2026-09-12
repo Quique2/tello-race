@@ -89,7 +89,11 @@ sticks. The browser sends the stick values 10 times per second and the ground st
 update arrives for 0.5 s, so a dropped connection never leaves the drone drifting. Switching to MISSION while
 airborne stops the sticks; START then runs the mission from the current hover. Switching to MANUAL during a run
 releases the navigator immediately (the drone hovers). LAND and EMERGENCY work in both modes; only the operator
-token can change modes or move the drone, a viewer only watches. Manual flight over a Funnel link adds internet
+token can change modes or move the drone, a viewer only watches. START, TAKE OFF and EMERGENCY STOP ask for a
+second click within 3 s (the button turns yellow) instead of a browser dialog, so they also work inside embedded
+browsers. If a button does nothing, read the yellow message at the bottom of the page: it says whether the page
+is not connected or the token only watches. The header must read "connected" and "role operator" before the
+MISSION/MANUAL buttons do anything. Manual flight over a Funnel link adds internet
 latency (typically 100-300 ms) on top of the video delay, so keep the speed slider low when flying remotely.
 A link of the form `https://<host>/?token=<viewer token>` stores the token in the browser once, so spectators
 only need the link.

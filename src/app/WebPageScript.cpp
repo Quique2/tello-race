@@ -7,15 +7,21 @@ $('bTok').onclick=()=>{tok=$('tok').value.trim();localStorage.setItem('tello_tok
 const q=tok?('?token='+encodeURIComponent(tok)):'';
 let ws=null,role='viewer',cam='',mode='mission',flying=false;
 function video(){const img=$('v');img.src='/stream.mjpg'+(q?q+'&':'?')+'r='+Date.now();img.onerror=()=>setTimeout(video,3000);}
-function send(cmd,arg){if(!ws||ws.readyState!==1)return false;ws.send(JSON.stringify({cmd:cmd,arg:arg||''}));return true;}
+let msgT=null;function msg(t,sticky){const e=$('msg');e.textContent=t;e.hidden=!t;clearTimeout(msgT);if(t&&!sticky)msgT=setTimeout(()=>{e.hidden=true;},5000);}
+function send(cmd,arg){if(!ws||ws.readyState!==1){msg('not connected: enter the operator token under ACCESS and press apply');return false;}
+ if(role!=='operator'){msg('this token only watches: enter the operator token under ACCESS to fly');return false;}
+ ws.send(JSON.stringify({cmd:cmd,arg:arg||''}));return true;}
+const arm={};function armed(id,label,f){const b=$(id);if(arm[id]){clearTimeout(arm[id]);arm[id]=null;b.textContent=b.dataset.l;b.classList.remove('arm');f();return;}
+ if(!ws||ws.readyState!==1||role!=='operator'){send(id);return;}b.dataset.l=b.textContent;b.textContent=label;b.classList.add('arm');
+ arm[id]=setTimeout(()=>{arm[id]=null;b.textContent=b.dataset.l;b.classList.remove('arm');},3000);}
 function bind(id,f){const e=$(id);if(e)e.onclick=f;}
-bind('bStart',()=>{if(confirm(flying?'Start the mission from the current hover?':'Take off and start the mission?'))send('start');});
+bind('bStart',()=>armed('bStart','click again to START',()=>send('start')));
 bind('bLand',()=>send('land'));bind('bLand2',()=>send('land'));
-bind('bEmg',()=>{if(confirm('EMERGENCY: stop the motors now?'))send('emergency');});bind('bEmg2',()=>{if(confirm('EMERGENCY: stop the motors now?'))send('emergency');});
+bind('bEmg',()=>armed('bEmg','click again: STOP MOTORS',()=>send('emergency')));bind('bEmg2',()=>armed('bEmg2','click again: STOP MOTORS',()=>send('emergency')));
 bind('bRec',()=>send('record'));bind('bRec2',()=>send('record'));
 bind('bCam',()=>{send('camera');setTimeout(video,1500);});bind('bCam2',()=>{send('camera');setTimeout(video,1500);});
-bind('bTakeoff',()=>{if(confirm('Take off (manual)?'))send('takeoff');});
-bind('mMission',()=>send('mode','mission'));bind('mManual',()=>{if(mode==='manual'||confirm('Manual mode: you fly with keys or pads. Continue?'))send('mode','manual');});
+bind('bTakeoff',()=>armed('bTakeoff','click again to TAKE OFF',()=>send('takeoff')));
+bind('mMission',()=>send('mode','mission'));bind('mManual',()=>{if(send('mode','manual'))msg('manual mode: TAKE OFF, then keys W/S A/D R/F Q/E or the pads');});
 $('resume').onchange=e=>send('tag',e.target.value);
 $('spd').oninput=e=>{$('spdv').textContent=e.target.value;};
 /* manual sticks: keyboard + on-screen pads, sent at 10 Hz while active, one zero when released */
@@ -43,8 +49,8 @@ function connect(){const proto=location.protocol==='https:'?'wss://':'ws://';ws=
  ws.onclose=()=>{$('dot').classList.remove('on');$('conn').textContent='reconnecting';setTimeout(connect,2000);};
  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data);}catch(x){return;}
   if(m.hello){role=m.role;$('role').textContent=role;document.body.classList.toggle('viewer',role!=='operator');return;}
-  if(m.error){alert(m.error);return;}
-  flying=!!m.flying;$('bStart').textContent=flying?'START (from hover)':'START (take off)';if(m.mode!==mode)setMode(m.mode);
+  if(m.error){msg(m.error);return;}
+  flying=!!m.flying;if(!arm['bStart'])$('bStart').textContent=flying?'START (from hover)':'START (take off)';if(m.mode!==mode)setMode(m.mode);
   $('phase').textContent=m.phase+(m.mode==='manual'?' (manual)':'');$('seg').textContent=m.seg;$('t').textContent=m.t.toFixed(1)+' s';
   $('drone').textContent=m.drone;const b=$('bat');b.textContent=m.telemetry?(m.bat+' %'):'no telemetry';b.classList.toggle('low',m.telemetry&&m.bat<30);
   $('h').textContent=m.telemetry?(m.tof+' cm'):'-';$('temp').textContent=m.telemetry?(m.templ+'-'+m.temph+' C'):'-';
@@ -52,7 +58,7 @@ function connect(){const proto=location.protocol==='https:'?'wss://':'ws://';ws=
   $('rc').textContent=m.rc.join(' ');$('cam').textContent=(m.camera==='belly'?'belly camera (downward)':'front camera')+(m.recording?'  REC':'')+(m.flying?'  FLYING':'');
   if(cam&&m.camera!==cam)video();cam=m.camera;
   $('ev').textContent=m.events.join('\n');const rt=m.recording?'STOP RECORDING':'RECORD';$('bRec').textContent=rt;$('bRec2').textContent=rt;};}
-fetch('/api/status'+q).then(r=>{if(r.status===401){$('conn').textContent='enter your token below and apply';$('cam').textContent='no video: token required';}
+fetch('/api/status'+q).then(r=>{if(r.status===401){$('conn').textContent='token required';$('cam').textContent='no video: token required';msg('Enter the operator token in the ACCESS box (bottom right) and press apply. Viewers use the viewer token.',true);$('tok').focus();}
  else{video();connect();}}).catch(()=>{$('conn').textContent='server unreachable';setTimeout(()=>location.reload(),5000);});
 </script></body></html>
 )HTML";

@@ -35,6 +35,10 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 * Mission/manual toggle added to the page: `mode manual|mission`, `rc a,b,c,d` (10 Hz from the browser, dead-man 0.5 s in
   MissionLoop), `takeoff` (manual only). The state JSON carries `mode`, `flying` and the applied sticks in `rc`.
   Verified with `ws_test.py` against the simulator: viewer tokens get `{"error":"operator token required"}`.
+* Page no longer uses confirm()/alert() (they are blocked in embedded browsers such as the VS Code Simple Browser and
+  silently returned false, which is why MANUAL "did nothing"): two-click arming for START/TAKE OFF/EMERGENCY and a
+  yellow message bar (#msg) for errors, "not connected" and "token required". One WebServer instance is now owned by
+  runFly/runSim, so the browser stays connected across simulator episodes.
 
 ### 2026-09-12 (laptop)
 * Repository pushed with the simulator-validated navigator (58/60 random courses), first contact with the real

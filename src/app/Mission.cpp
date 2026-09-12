@@ -30,8 +30,8 @@ std::string timestamp() {
 
 class MissionLoop {
 public:
-    MissionLoop(IDrone& drone, IFrameSource& src, IClock& clock, const Config& cfg, const MissionOptions& opt, Simulator* sim)
-        : drone_(drone), src_(src), clock_(clock), cfg_(cfg), opt_(opt), sim_(sim), nav_(drone, clock, cfg) {}
+    MissionLoop(IDrone& drone, IFrameSource& src, IClock& clock, const Config& cfg, const MissionOptions& opt, Simulator* sim, WebServer* web)
+        : drone_(drone), src_(src), clock_(clock), cfg_(cfg), opt_(opt), sim_(sim), nav_(drone, clock, cfg), web_(web) {}
     int run();
 
 private:
@@ -58,7 +58,7 @@ private:
     uint64_t seq_ = 0;
     int startAtTag_ = 0;
     std::string recBase_;
-    WebServer web_;
+    WebServer* web_ = nullptr;   // owned by runFly/runSim so it outlives simulator episodes
     bool webOn_ = false;
     bool manual_ = false;                 // manual mode: the browser drives the sticks, the navigator is idle
     int manualRc_[4] = {0, 0, 0, 0};
@@ -72,15 +72,15 @@ int MissionLoop::run() {
     const std::string win = "tello_race";
     if (!opt_.headless) cv::namedWindow(win, cv::WINDOW_AUTOSIZE);
     if (opt_.record) startRecording();
-    webOn_ = cfg_.getBool("web.enabled", false);
-    if (webOn_) {
+    webOn_ = web_ && cfg_.getBool("web.enabled", false);
+    if (webOn_ && !web_->running()) {
         WebServer::Options wo;
         wo.port = cfg_.getInt("web.port", 8080);
         wo.token = cfg_.getString("web.token", "");
         wo.viewerToken = cfg_.getString("web.viewer_token", "");
         wo.fps = cfg_.getInt("web.fps", 15);
         wo.jpegQuality = cfg_.getInt("web.jpeg_quality", 70);
-        if (!web_.start(wo, &err)) { LOG_ERROR("%s", err.c_str()); webOn_ = false; }
+        if (!web_->start(wo, &err)) { LOG_ERROR("%s", err.c_str()); webOn_ = false; }
     }
     if (opt_.autoStart) nav_.start(startAtTag_);
     else LOG_INFO("Ready. Press 't' in the video window to take off and start (l/space = land, e = emergency, q = quit).");
@@ -96,7 +96,7 @@ int MissionLoop::run() {
     while (true) {
         if (quitting_ && !nav_.flying()) break;
         WebCommand wc;
-        while (webOn_ && web_.popCommand(wc)) applyWebCommand(wc);
+        while (webOn_ && web_->popCommand(wc)) applyWebCommand(wc);
         bool got = src_.latest(frame, seq_, 0.25);
         if (got) { seq_ = frame.seq; haveFrame = true; lastFrameWall = wall.now(); }
         else if (src_.ended()) { LOG_INFO("end of video source"); break; }
@@ -124,9 +124,9 @@ int MissionLoop::run() {
         if (recording_ && got) record(frame.image, obs, st);
         if (got && ++fpsN && wall.now() - fpsT > 1.0) { fps = fpsN / (wall.now() - fpsT); fpsN = 0; fpsT = wall.now(); }
 
-        if (webOn_ && wall.now() - lastStateT > 0.1) { web_.publishState(stateJson(obs, st, fps)); lastStateT = wall.now(); }
+        if (webOn_ && wall.now() - lastStateT > 0.1) { web_->publishState(stateJson(obs, st, fps)); lastStateT = wall.now(); }
         bool dump = opt_.dumpEvery > 0 && got && (seq_ % opt_.dumpEvery == 0);
-        bool stream = webOn_ && got && web_.streamClients() > 0;
+        bool stream = webOn_ && got && web_->streamClients() > 0;
         if (!opt_.headless || dump || stream) {
             cv::Mat canvas = haveFrame ? frame.image.clone() : cv::Mat(720, 960, CV_8UC3, cv::Scalar(30, 30, 30));
             if (showDebug_ && got) perception_.drawDebug(canvas, obs);
@@ -138,7 +138,7 @@ int MissionLoop::run() {
                 snprintf(name, sizeof(name), "/frame_%06llu.png", (unsigned long long)seq_);
                 cv::imwrite(opt_.dumpDir + name, canvas);
             }
-            if (stream) web_.publishFrame(canvas);
+            if (stream) web_->publishFrame(canvas);
             if (!opt_.headless) {
                 if (std::fabs(opt_.uiScale - 1.0) > 1e-3) cv::resize(canvas, canvas, cv::Size(), opt_.uiScale, opt_.uiScale);
                 cv::imshow(win, canvas);
@@ -165,7 +165,6 @@ int MissionLoop::run() {
         nav_.step(o, drone_.state());
     }
     stopRecording();
-    web_.stop();
     if (!opt_.headless) cv::destroyAllWindows();
     return 0;
 }
@@ -370,8 +369,10 @@ int runFly(const Config& cfg, const MissionOptions& opt) {
     std::string err;
     if (!openLiveSource(cfg, opt, clock, drone, src, &err)) { LOG_ERROR("%s", err.c_str()); return 1; }
     if (opt.dryRun) LOG_WARN("DRY RUN: flight commands are logged, not sent");
-    MissionLoop loop(*drone, *src, clock, cfg, opt, nullptr);
+    WebServer web;
+    MissionLoop loop(*drone, *src, clock, cfg, opt, nullptr, &web);
     int rc = loop.run();
+    web.stop();
     src->stop();
     drone->disconnect();
     return rc;
@@ -381,13 +382,14 @@ int runSim(const Config& cfg, const MissionOptions& opt) {
     int finished = 0;
     double sumT = 0;
     std::vector<std::string> rows;
+    WebServer web;   // one server for the whole batch: the browser stays connected between episodes
     for (int ep = 0; ep < std::max(1, opt.episodes); ++ep) {
         uint64_t seed = opt.seed + ep;
         TagDetector renderer;
         std::string err;
         if (!renderer.init(cfg.getString("tag.family", "tag36h11"), 2.0, 0.0, 1, false, 0.25, &err)) { LOG_ERROR("%s", err.c_str()); return 1; }
         Simulator sim(cfg, seed, opt.track, renderer);
-        MissionLoop loop(sim, sim, sim, cfg, opt, &sim);
+        MissionLoop loop(sim, sim, sim, cfg, opt, &sim, &web);
         loop.run();
         const auto& r = sim.result();
         char row[256];
@@ -397,6 +399,7 @@ int runSim(const Config& cfg, const MissionOptions& opt) {
         rows.push_back(row);
         if (r.finished) { ++finished; sumT += r.time; }
     }
+    web.stop();
     printf("\n==== simulation summary: %d/%d courses completed, mean time %.1fs ====\n", finished, std::max(1, opt.episodes),
            finished ? sumT / finished : 0.0);
     for (auto& r : rows) printf("%s\n", r.c_str());

@@ -29,7 +29,9 @@ body.manual .mission-only{display:none}body.mission .manual-only{display:none}
 .pads{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}.pad{position:relative;aspect-ratio:1;border-radius:50%;background:#0f1216;border:2px solid #2b3442;touch-action:none;user-select:none}
 .pad .knob{position:absolute;left:50%;top:50%;width:34%;height:34%;border-radius:50%;background:var(--acc);transform:translate(-50%,-50%);opacity:.85}
 .pad .lbl{position:absolute;left:0;right:0;bottom:6px;text-align:center;font-size:11px;color:var(--dim)}
-.hint{font-size:12px;color:var(--dim);margin:8px 0 0}input[type=range]{width:100%}
+.hint{font-size:12px;color:var(--dim);margin:8px 0 0}
+#msg{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--warn);color:#000;padding:10px 16px;border-radius:8px;font-weight:600;z-index:9;max-width:90vw;box-shadow:0 4px 16px #0008}
+button.arm{background:var(--warn)!important;color:#000}input[type=range]{width:100%}
 </style></head><body class="mission">
 )HTML";
 
@@ -62,7 +64,7 @@ static const char* kPageB = R"HTML(<header><h1>tello_race</h1><span><span class=
   <p class="hint">keys: W/S forward-back, A/D left-right, R/F up-down, Q/E yaw, space = stop. Sticks release to hover if the link drops.</p></div>
  <div class="panel"><h2>Events</h2><div class="ev" id="ev"></div></div>
  <div class="panel"><h2>Access</h2><input type="text" id="tok" placeholder="token (operator or viewer)"><p><button id="bTok">apply token</button></p></div>
-</aside></main>
+</aside><div id="msg" hidden></div></main>
 )HTML";
 
 const char* webPageHtml() {
