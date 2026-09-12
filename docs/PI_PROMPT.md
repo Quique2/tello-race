@@ -46,23 +46,23 @@ Turn this Pi into a headless ground station that:
 
 **0. Keep the Pi usable on its own: SSH, fixed address, screen switching.** Do this first.
 
-*0a. SSH as the safety net.* `sudo raspi-config nonint do_ssh 0`, confirm `ss -ltn | grep :22`. The laptop is at
-the same home network and will use `ssh <user>@192.168.1.78`.
+*0a. SSH as the safety net.* `sudo raspi-config nonint do_ssh 0`, confirm `ss -ltn | grep :22`. The Pi is wired
+to the laptop's Ethernet port and the laptop shares its internet over that cable (Windows Internet Connection
+Sharing: laptop = 192.168.137.1, DHCP for the Pi). The laptop will use `ssh <user>@192.168.137.10` once 0b is done.
+Report the Pi's username.
 
-*0b. Fixed address on the home network.* The Pi is currently 192.168.1.78 (DHCP from the Infinitum router,
-gateway expected 192.168.1.254). Find the active connection and its values:
-`nmcli -t -f NAME,DEVICE,TYPE con show --active` and `nmcli dev show <device> | grep IP4`. Pin the address the Pi
-already has, only on that home profile (other networks such as a phone hotspot stay DHCP):
+*0b. Fixed address on the cable.* Find the wired profile (`nmcli -t -f NAME,DEVICE,TYPE con show`, usually
+"Wired connection 1" on eth0) and check that it got an address from the laptop (`nmcli dev show eth0 | grep IP4`:
+expected 192.168.137.x, gateway 192.168.137.1). If it has none, `sudo nmcli con up "<wired name>"`. Then pin it:
 
 ```
-sudo nmcli con modify "<home connection name>" ipv4.method manual ipv4.addresses 192.168.1.78/24 \
-     ipv4.gateway 192.168.1.254 ipv4.dns "192.168.1.254 1.1.1.1"
-sudo nmcli con up "<home connection name>"
+sudo nmcli con modify "<wired name>" ipv4.method manual ipv4.addresses 192.168.137.10/24 ipv4.gateway 192.168.137.1 ipv4.dns 192.168.137.1 connection.autoconnect yes
+sudo nmcli con up "<wired name>"
 ```
 
-Verify `ip -4 addr`, `ip route` (default via 192.168.1.254), `ping -c 2 1.1.1.1`, and that VNC and SSH still
-work. Ask the user to also reserve 192.168.1.78 for the Pi's MAC address in the router (admin page at
-192.168.1.254) so no other device can take it while the Pi is off. Report the MAC in HANDOFF.
+Warn the user first: the VNC session drops for a few seconds. Verify `ip route` (default via 192.168.137.1 dev
+eth0), `ping -c 2 1.1.1.1`, `curl -sI https://github.com | head -1`, and that VNC works again at 192.168.137.10.
+Leave the home Wi-Fi profile on DHCP: while the cable is in, the Pi's Wi-Fi is free for the drone.
 
 *0c. Screens follow the VNC connection.* The Pi has a small integrated DSI display (`DSI-2`) and an HDMI output
 (`HDMI-A-1`). The user connects with TigerVNC to WayVNC, which shows only one output. Required behaviour:
@@ -119,15 +119,17 @@ simulator result in HANDOFF.
 to authorize. Report `tailscale ip -4` and the MagicDNS name from `tailscale status`. The laptop will use
 `ssh <user>@<tailscale-ip>` and `tmux attach -t claude`.
 
-**D. VNC.** VNC is already enabled (WayVNC, port 5900). After step 0c it shows `HDMI-A-1` while connected. If the
+**D. VNC.** VNC is already enabled (WayVNC, port 5900; the laptop connects to 192.168.137.10:5900). After step 0c
+it shows `HDMI-A-1` while connected. If the
 user ever wants both screens visible at once, a second server `wayvnc -o DSI-2 0.0.0.0 5901` gives the small
 screen on port 5901. Keep a terminal with the `claude` tmux session visible so the user can watch you work.
 
 **E. Drone Wi-Fi and internet at the same time.** Pick the best option this hardware allows, in this order:
 
-1. Ethernet to the router = internet and Tailscale; built-in Wi-Fi (`wlan0`) = drone.
+1. Ethernet to the laptop, which shares its internet (already in place, gateway 192.168.137.1), or to a router =
+   internet and Tailscale; built-in Wi-Fi (`wlan0`) = drone. This is the layout to use.
 2. A second Wi-Fi adapter (USB) = internet; the other radio = drone.
-3. Phone USB tethering (`usb0`) = internet, for the competition venue where there is no Ethernet.
+3. Phone USB tethering (`usb0`) = internet, only if one day the Pi must work without the laptop.
 
 Create the drone profile once (open network, never the default route):
 
@@ -137,7 +139,7 @@ sudo nmcli con modify tello ipv4.never-default yes ipv6.method disabled connecti
 ```
 
 Bring it up only while the drone is powered on (`nmcli con up tello`). Verify: `ip route` keeps its default route
-on eth0/usb0, `ping -c 3 192.168.10.1` works, `tailscale status` stays connected, and internet still works.
+on eth0 via 192.168.137.1, `ping -c 3 192.168.10.1` works, `tailscale status` stays connected, and internet still works.
 Write `scripts/pi/drone_wifi.sh up|down|status` and `scripts/pi/ground_station.sh` (starts
 `./build/tello_race fly --headless --set web.enabled=1` in a tmux window named `drone`, and prints the Funnel URL).
 Check that no firewall blocks UDP 8890 and 11111 inbound on wlan0 (`sudo ufw status` if ufw exists).
@@ -168,7 +170,7 @@ ground station in tmux at boot, so the Pi only needs power at the venue.
 
 ## Reporting
 
-Append to `docs/HANDOFF.md` under `### <date> (pi)`: OS, compiler and OpenCV versions; the Pi's MAC and fixed
+Append to `docs/HANDOFF.md` under `### <date> (pi)`: OS, compiler and OpenCV versions; the Pi's username and fixed
 address; how the screen switching was implemented and the recovery command; Tailscale IP and name; Linux build
 fixes; simulator result; the network layout chosen and the `ip route` check; Funnel URL (no token); open issues and
 what you need from the laptop side. Commit with `pi:` prefixed messages and push.

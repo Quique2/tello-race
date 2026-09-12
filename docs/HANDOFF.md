@@ -27,6 +27,10 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 ## Entries
 
 ### 2026-09-12 (laptop) tokens and Pi deployment plan
+* Network layout chosen on 2026-09-12: the Pi is wired to the laptop's Ethernet port and the laptop shares its
+  Wi-Fi internet over the cable (Windows Internet Connection Sharing, laptop = 192.168.137.1, service set to start
+  automatically). The Pi pins 192.168.137.10 on eth0 (step 0b of PI_PROMPT.md); its Wi-Fi is free for the drone.
+  The laptop reaches the Pi at 192.168.137.10 (VNC 5900, SSH 22, web page 8080) with no internet hop.
 * Tokens decided by the user: operator (full access) `quiquepro`, viewer `watch`, both in `config/default.ini`
   (private repo; never paste the operator token into HANDOFF, logs or a shared link).
 * `docs/PI_PROMPT.md` is the complete brief for the Pi's Claude Code session: install, Linux build, Tailscale
