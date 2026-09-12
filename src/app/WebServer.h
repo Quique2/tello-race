@@ -80,7 +80,7 @@ struct StateSnapshot {
     bool telemetry = false;
     int bat = -1, tof = 0, h = 0, yaw = 0, pitch = 0, roll = 0, templ = 0, temph = 0;
     double fps = 0;
-    bool belly = false, recording = false;
+    bool belly = false, recording = false, manual = false, flying = false;
     const char* drone = "";
     int tagId = 0;
     double tagX = 0;

@@ -80,9 +80,17 @@ try it without the drone: `tello_race sim --headless --set web.enabled=1` then o
 
 From anywhere: on the Pi ground station, `tailscale serve --bg 8080` exposes the page to your tailnet, and
 `tailscale funnel --bg 8080` gives a public HTTPS link (Funnel must be enabled once in the Tailscale admin
-console). Keep the operator token secret; share the viewer token for spectators. Flying by joystick over the
-internet is deliberately not offered: the mission runs on the ground station, and its watchdogs land the drone
-if video or telemetry stop.
+console). Keep the operator token secret; share the viewer token for spectators.
+
+**Mission / manual toggle.** The header has two buttons. MISSION is the autonomous mode (START runs the race
+navigator). MANUAL hands the sticks to the browser: TAKE OFF, then keys `W/S` forward/back, `A/D` left/right,
+`R/F` up/down, `Q/E` yaw, space = stop, or drag the two on-screen pads on a phone; the speed slider scales the
+sticks. The browser sends the stick values 10 times per second and the ground station zeroes them (hover) if no
+update arrives for 0.5 s, so a dropped connection never leaves the drone drifting. Switching to MISSION while
+airborne stops the sticks; START then runs the mission from the current hover. Switching to MANUAL during a run
+releases the navigator immediately (the drone hovers). LAND and EMERGENCY work in both modes; only the operator
+token can change modes or move the drone, a viewer only watches. Manual flight over a Funnel link adds internet
+latency (typically 100-300 ms) on top of the video delay, so keep the speed slider low when flying remotely.
 
 ## Before the competition: calibration checklist (practice track)
 

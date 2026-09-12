@@ -2,6 +2,7 @@
 #include "app/WebServer.h"
 
 #include <chrono>
+#include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -17,6 +18,8 @@
 #include "vision/Perception.h"
 
 namespace {
+
+double wallNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 std::string timestamp() {
     std::time_t t = std::time(nullptr);
@@ -39,6 +42,7 @@ private:
     void record(const cv::Mat& frame, const Observation& obs, const TelloState& st);
     std::string stateJson(const Observation& obs, const TelloState& st, double fps);
     void applyWebCommand(const WebCommand& c);
+    void setManual(bool on);
 
     IDrone& drone_;
     IFrameSource& src_;
@@ -56,6 +60,9 @@ private:
     std::string recBase_;
     WebServer web_;
     bool webOn_ = false;
+    bool manual_ = false;                 // manual mode: the browser drives the sticks, the navigator is idle
+    int manualRc_[4] = {0, 0, 0, 0};
+    double manualRcT_ = 0;
 };
 
 int MissionLoop::run() {
@@ -107,7 +114,13 @@ int MissionLoop::run() {
             LOG_ERROR("no video for 2.5 s while flying -> landing");
             nav_.requestLand();
         }
-        if (got || !sim_) nav_.step(obs, st);
+        if (manual_) {
+            int r0 = manualRc_[0], r1 = manualRc_[1], r2 = manualRc_[2], r3 = manualRc_[3];
+            if (wall.now() - manualRcT_ > 0.5) r0 = r1 = r2 = r3 = 0;   // dead-man: no fresh sticks -> hover
+            if (drone_.isFlying()) drone_.rc(r0, r1, r2, r3);
+        } else if (got || !sim_) {
+            nav_.step(obs, st);
+        }
         if (recording_ && got) record(frame.image, obs, st);
         if (got && ++fpsN && wall.now() - fpsT > 1.0) { fps = fpsN / (wall.now() - fpsT); fpsN = 0; fpsT = wall.now(); }
 
@@ -158,17 +171,37 @@ int MissionLoop::run() {
 }
 
 void MissionLoop::applyWebCommand(const WebCommand& c) {
-    LOG_INFO("web command: %s %s", c.cmd.c_str(), c.arg.c_str());
-    if (c.cmd == "start") handleKey('t');
-    else if (c.cmd == "land") handleKey('l');
+    if (c.cmd != "rc") LOG_INFO("web command: %s %s", c.cmd.c_str(), c.arg.c_str());
+    if (c.cmd == "mode") setManual(c.arg == "manual");
+    else if (c.cmd == "rc") {
+        int a = 0, b = 0, d = 0, e = 0;
+        if (manual_ && sscanf(c.arg.c_str(), "%d,%d,%d,%d", &a, &b, &d, &e) == 4) {
+            manualRc_[0] = std::max(-100, std::min(100, a)); manualRc_[1] = std::max(-100, std::min(100, b));
+            manualRc_[2] = std::max(-100, std::min(100, d)); manualRc_[3] = std::max(-100, std::min(100, e));
+            manualRcT_ = wallNow();
+        }
+    }
+    else if (c.cmd == "takeoff") { if (manual_ && !drone_.isFlying()) { if (!drone_.takeoff()) LOG_WARN("manual takeoff refused: %s", drone_.lastReply.c_str()); } }
+    else if (c.cmd == "start") { if (!manual_) handleKey('t'); else LOG_WARN("START ignored in manual mode: switch to mission mode first"); }
+    else if (c.cmd == "land") { if (manual_) { manualRc_[0] = manualRc_[1] = manualRc_[2] = manualRc_[3] = 0; drone_.land(); } else handleKey('l'); }
     else if (c.cmd == "emergency") handleKey('e');
     else if (c.cmd == "record") handleKey('r');
     else if (c.cmd == "camera") handleKey('v');
     else if (c.cmd == "tag") handleKey('0' + std::max(0, std::min(3, atoi(c.arg.c_str()))));
 }
 
+void MissionLoop::setManual(bool on) {
+    if (on == manual_) return;
+    manual_ = on;
+    manualRc_[0] = manualRc_[1] = manualRc_[2] = manualRc_[3] = 0;
+    manualRcT_ = 0;
+    if (on) { nav_.release(); LOG_INFO("MANUAL mode: the browser drives the sticks (dead-man 0.5 s)"); }
+    else { if (drone_.isFlying()) drone_.rc(0, 0, 0, 0); LOG_INFO("MISSION mode: press START to run the mission%s", drone_.isFlying() ? " from the current hover" : ""); }
+}
+
 std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st, double fps) {
     StateSnapshot s;
+    s.manual = manual_; s.flying = drone_.isFlying();
     s.phase = nav_.phaseName(); s.seg = nav_.segmentsDone(); s.t = nav_.missionTime();
     s.telemetry = st.valid; s.bat = st.bat; s.tof = st.tof; s.h = st.h; s.yaw = st.yaw; s.pitch = st.pitch; s.roll = st.roll;
     s.templ = st.templ; s.temph = st.temph; s.fps = fps;
@@ -176,8 +209,13 @@ std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st,
     std::string dn = drone_.name();
     s.drone = dn.c_str();
     if (!obs.tags.empty()) { s.tagId = obs.tags.front().id; s.tagX = obs.tags.front().X; }
-    RcCommand rc = nav_.lastRc();
-    s.rc[0] = rc.lr; s.rc[1] = rc.fb; s.rc[2] = rc.ud; s.rc[3] = rc.yaw;
+    if (manual_) {   // show the operator the sticks actually applied (zeros once the dead-man has fired)
+        bool stale = wallNow() - manualRcT_ > 0.5;
+        for (int i = 0; i < 4; ++i) s.rc[i] = stale ? 0 : manualRc_[i];
+    } else {
+        RcCommand rc = nav_.lastRc();
+        s.rc[0] = rc.lr; s.rc[1] = rc.fb; s.rc[2] = rc.ud; s.rc[3] = rc.yaw;
+    }
     s.events = nav_.events;
     return stateToJson(s);
 }
@@ -207,7 +245,7 @@ bool MissionLoop::handleKey(int key) {
         case 'v': {   // toggle front / belly camera (SDK 3.0 "downvision"); the stream is reopened
             auto* td = dynamic_cast<TelloDrone*>(&drone_);
             if (!td) { LOG_INFO("camera switch is only available on the real drone"); return true; }
-            if (nav_.flying()) { LOG_WARN("not switching cameras while flying"); return true; }
+            if (nav_.flying() || drone_.isFlying()) { LOG_WARN("not switching cameras while flying"); return true; }
             bool on = !td->downvision();
             src_.stop();
             if (td->setDownvision(on)) { perception_.setDownwardCamera(on); LOG_INFO("video: %s camera", on ? "downward (belly)" : "front"); }
@@ -234,7 +272,7 @@ void MissionLoop::drawHud(cv::Mat& canvas, const Observation& obs, const TelloSt
     auto put = [&](int line, const char* text, cv::Scalar col = cv::Scalar(255, 255, 255), double sc = 0.55) {
         cv::putText(canvas, text, cv::Point(8, 20 + line * 20), cv::FONT_HERSHEY_SIMPLEX, sc, col, 1, cv::LINE_AA);
     };
-    put(0, nav_.status().c_str(), cv::Scalar(0, 255, 255), 0.6);
+    put(0, ((manual_ ? std::string("MANUAL CONTROL   ") : std::string()) + nav_.status()).c_str(), manual_ ? cv::Scalar(0, 165, 255) : cv::Scalar(0, 255, 255), 0.6);
     if (st.valid) {
         snprintf(buf, sizeof(buf), "bat=%d%%  tof=%dcm h=%dcm  yaw=%d pitch=%d roll=%d  v=(%d,%d,%d)  temp=%d-%dC", st.bat, st.tof,
                  st.h, st.yaw, st.pitch, st.roll, st.vgx, st.vgy, st.vgz, st.templ, st.temph);

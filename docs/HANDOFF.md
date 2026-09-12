@@ -32,6 +32,9 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
   emergency/record/camera/tag gated by `web.token`; `web.viewer_token` = watch only. Verified in the simulator.
 * On the Pi: after building, run `./build/tello_race fly --dry-run --headless --set web.enabled=1 --set web.token=<secret>`
   and `tailscale serve --bg 8080` (tailnet) or `tailscale funnel --bg 8080` (public HTTPS link). Report the URL.
+* Mission/manual toggle added to the page: `mode manual|mission`, `rc a,b,c,d` (10 Hz from the browser, dead-man 0.5 s in
+  MissionLoop), `takeoff` (manual only). The state JSON carries `mode`, `flying` and the applied sticks in `rc`.
+  Verified with `ws_test.py` against the simulator: viewer tokens get `{"error":"operator token required"}`.
 
 ### 2026-09-12 (laptop)
 * Repository pushed with the simulator-validated navigator (58/60 random courses), first contact with the real

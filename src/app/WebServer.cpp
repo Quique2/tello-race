@@ -169,13 +169,16 @@ int WebServer::onWsData(mg_connection* c, int bits, char* data, size_t len) {
     if (op == 0x8) return 0;      // close frame
     if (op != 0x1) return 1;      // only text messages carry commands
     std::string msg(data, len);
-    auto field = [&](const char* key) -> std::string {
-        std::string k = std::string("\"") + key + "\":\"";
+    auto field = [&](const char* key) -> std::string {   // tolerant of whitespace: "key" : "value"
+        std::string k = std::string("\"") + key + "\"";
         size_t p = msg.find(k);
         if (p == std::string::npos) return "";
-        p += k.size();
-        size_t e = msg.find('"', p);
-        return e == std::string::npos ? "" : msg.substr(p, e - p);
+        p = msg.find(':', p + k.size());
+        if (p == std::string::npos) return "";
+        p = msg.find('"', p + 1);
+        if (p == std::string::npos) return "";
+        size_t e = msg.find('"', p + 1);
+        return e == std::string::npos ? "" : msg.substr(p + 1, e - p - 1);
     };
     std::string cmd = field("cmd"), arg = field("arg");
     if (cmd.empty()) return 1;
@@ -218,9 +221,9 @@ std::string stateToJson(const StateSnapshot& s) {
     snprintf(buf, sizeof(buf),
              "{\"phase\":\"%s\",\"seg\":%d,\"t\":%.1f,\"telemetry\":%s,\"bat\":%d,\"tof\":%d,\"h\":%d,\"yaw\":%d,\"pitch\":%d,"
              "\"roll\":%d,\"templ\":%d,\"temph\":%d,\"fps\":%.1f,\"camera\":\"%s\",\"recording\":%s,\"drone\":\"%s\","
-             "\"tag\":%d,\"tagX\":%.2f,\"rc\":[%d,%d,%d,%d],\"events\":[%s]}",
+             "\"mode\":\"%s\",\"flying\":%s,\"tag\":%d,\"tagX\":%.2f,\"rc\":[%d,%d,%d,%d],\"events\":[%s]}",
              s.phase, s.seg, s.t, s.telemetry ? "true" : "false", s.bat, s.tof, s.h, s.yaw, s.pitch, s.roll, s.templ, s.temph, s.fps,
-             s.belly ? "belly" : "front", s.recording ? "true" : "false", s.drone, s.tagId, s.tagX, s.rc[0], s.rc[1], s.rc[2], s.rc[3],
+             s.belly ? "belly" : "front", s.recording ? "true" : "false", s.drone, s.manual ? "manual" : "mission", s.flying ? "true" : "false", s.tagId, s.tagX, s.rc[0], s.rc[1], s.rc[2], s.rc[3],
              ev.c_str());
     return buf;
 }

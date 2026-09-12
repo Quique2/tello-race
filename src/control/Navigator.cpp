@@ -117,6 +117,13 @@ void Navigator::start(int startAtTag) {
 
 void Navigator::requestLand() { landRequested_ = true; }
 
+void Navigator::release() {
+    now_ = clock_.now();
+    if (phase_ != Phase::Idle && !finished()) { hover(true); setPhase(Phase::Idle, "released to manual control"); }
+    landRequested_ = false;
+    turning_ = false;
+}
+
 void Navigator::emergencyStop() {
     LOG_ERROR("NAV emergency stop!");
     drone_.emergency();
@@ -347,6 +354,16 @@ void Navigator::doTakeoff(const TelloState& st) {
     if (st.valid && st.bat >= 0 && st.bat < p_.minBattery) {
         LOG_ERROR("NAV battery %d%% below minimum %d%% -> not taking off", st.bat, p_.minBattery);
         setPhase(Phase::Aborted, "low battery");
+        return;
+    }
+    if (drone_.isFlying()) {   // started from a manual hover: no takeoff, keep the current altitude
+        LOG_INFO("NAV already airborne: starting the mission from hover");
+        missionStart_ = clock_.now();
+        hover(true);
+        afterBlockingCommand();
+        if (startAtTag_ == 2 || startAtTag_ == 3) { pendingDir_ = startAtTag_; beginTurn(startAtTag_ == 2 ? -90 : 90, drone_.state()); if (!turning_) beginAcquireAfterManeuver("resume: turned at checkpoint"); }
+        else if (startAtTag_ == 1) beginGap("resume: forward checkpoint", drone_.state());
+        else beginAcquire("airborne (from hover)");
         return;
     }
     if (!drone_.takeoff()) {

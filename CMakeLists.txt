@@ -78,7 +78,8 @@ set(SRC
   src/app/Mission.cpp
   src/app/Tools.cpp
   src/app/WebServer.cpp
-  src/app/WebPage.cpp)
+  src/app/WebPage.cpp
+  src/app/WebPageScript.cpp)
 
 add_executable(tello_race ${SRC})
 target_include_directories(tello_race PRIVATE src)

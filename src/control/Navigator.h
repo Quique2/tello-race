@@ -50,6 +50,7 @@ public:
     Navigator(IDrone& drone, IClock& clock, const Config& cfg);
     void start(int startAtTag = 0);      // 0 = start line; 1/2/3 = resume standing on that tag (checkpoint)
     void requestLand();                  // graceful stop
+    void release();                      // hand the sticks to the operator (manual mode): navigator goes idle, drone keeps hovering
     void emergencyStop();
     void step(const Observation& obs, const TelloState& st);
 
