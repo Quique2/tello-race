@@ -70,6 +70,20 @@ inbound allow rules for the program on the Public profile. `scripts\wifi_tello.p
 is charge-only (1.5 A adapter, aircraft switched off), and a yellow blinking LED means "no client connected" /
 "no vision positioning", not an error; it turns purple once the SDK is connected.
 
+## Web interface (ground station in a browser)
+
+`tello_race fly --set web.enabled=1` (or `enabled = 1` in the `[web]` section) serves a single page at
+`http://<host>:8080/`: the live camera with the perception overlay (MJPEG), telemetry, mission phase and events,
+and buttons for start, land, emergency stop, record and the front/belly camera switch. Commands require the
+operator token (`web.token`); a viewer token only watches. It works the same in `sim` mode, which is the way to
+try it without the drone: `tello_race sim --headless --set web.enabled=1` then open the page.
+
+From anywhere: on the Pi ground station, `tailscale serve --bg 8080` exposes the page to your tailnet, and
+`tailscale funnel --bg 8080` gives a public HTTPS link (Funnel must be enabled once in the Tailscale admin
+console). Keep the operator token secret; share the viewer token for spectators. Flying by joystick over the
+internet is deliberately not offered: the mission runs on the ground station, and its watchdogs land the drone
+if video or telemetry stop.
+
 ## Before the competition: calibration checklist (practice track)
 
 1. **Connectivity**: `tello_race telemetry --duration 10`. Both "telemetry: OK" and a video fps > 20 are required.

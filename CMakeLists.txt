@@ -34,6 +34,29 @@ if(TARGET apriltag AND NOT MSVC)
 endif()
 
 # ---------------------------------------------------------------------------
+# civetweb (embedded HTTP + WebSocket server for the ground-station web interface)
+# ---------------------------------------------------------------------------
+set(CIVETWEB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(CIVETWEB_ENABLE_SERVER_EXECUTABLE OFF CACHE BOOL "" FORCE)
+set(CIVETWEB_INSTALL_EXECUTABLE OFF CACHE BOOL "" FORCE)
+set(CIVETWEB_ENABLE_WEBSOCKETS ON CACHE BOOL "" FORCE)
+set(CIVETWEB_ENABLE_SSL OFF CACHE BOOL "" FORCE)
+set(CIVETWEB_ENABLE_ASAN OFF CACHE BOOL "" FORCE)
+set(CIVETWEB_ENABLE_CXX OFF CACHE BOOL "" FORCE)
+set(CIVETWEB_DISABLE_CGI ON CACHE BOOL "" FORCE)
+set(CIVETWEB_ENABLE_IPV6 OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(civetweb
+  GIT_REPOSITORY https://github.com/civetweb/civetweb.git
+  GIT_TAG        v1.16
+  GIT_SHALLOW    TRUE)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)   # civetweb's cmake_minimum_required is older than CMake 4 accepts
+FetchContent_MakeAvailable(civetweb)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
+if(TARGET civetweb-c-library AND NOT MSVC)
+  target_compile_options(civetweb-c-library PRIVATE -w)
+endif()
+
+# ---------------------------------------------------------------------------
 # tello_race executable
 # ---------------------------------------------------------------------------
 set(SRC
@@ -53,11 +76,14 @@ set(SRC
   src/sim/Track.cpp
   src/sim/Simulator.cpp
   src/app/Mission.cpp
-  src/app/Tools.cpp)
+  src/app/Tools.cpp
+  src/app/WebServer.cpp
+  src/app/WebPage.cpp)
 
 add_executable(tello_race ${SRC})
 target_include_directories(tello_race PRIVATE src)
-target_link_libraries(tello_race PRIVATE ${OpenCV_LIBS} apriltag)
+target_link_libraries(tello_race PRIVATE ${OpenCV_LIBS} apriltag civetweb-c-library)
+target_include_directories(tello_race PRIVATE ${civetweb_SOURCE_DIR}/include)
 if(WIN32)
   target_link_libraries(tello_race PRIVATE ws2_32)
   target_compile_definitions(tello_race PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)

@@ -1,4 +1,5 @@
 #include "app/Mission.h"
+#include "app/WebServer.h"
 
 #include <chrono>
 #include <ctime>
@@ -36,6 +37,8 @@ private:
     void startRecording();
     void stopRecording();
     void record(const cv::Mat& frame, const Observation& obs, const TelloState& st);
+    std::string stateJson(const Observation& obs, const TelloState& st, double fps);
+    void applyWebCommand(const WebCommand& c);
 
     IDrone& drone_;
     IFrameSource& src_;
@@ -51,6 +54,8 @@ private:
     uint64_t seq_ = 0;
     int startAtTag_ = 0;
     std::string recBase_;
+    WebServer web_;
+    bool webOn_ = false;
 };
 
 int MissionLoop::run() {
@@ -60,6 +65,16 @@ int MissionLoop::run() {
     const std::string win = "tello_race";
     if (!opt_.headless) cv::namedWindow(win, cv::WINDOW_AUTOSIZE);
     if (opt_.record) startRecording();
+    webOn_ = cfg_.getBool("web.enabled", false);
+    if (webOn_) {
+        WebServer::Options wo;
+        wo.port = cfg_.getInt("web.port", 8080);
+        wo.token = cfg_.getString("web.token", "");
+        wo.viewerToken = cfg_.getString("web.viewer_token", "");
+        wo.fps = cfg_.getInt("web.fps", 15);
+        wo.jpegQuality = cfg_.getInt("web.jpeg_quality", 70);
+        if (!web_.start(wo, &err)) { LOG_ERROR("%s", err.c_str()); webOn_ = false; }
+    }
     if (opt_.autoStart) nav_.start(startAtTag_);
     else LOG_INFO("Ready. Press 't' in the video window to take off and start (l/space = land, e = emergency, q = quit).");
 
@@ -70,8 +85,11 @@ int MissionLoop::run() {
     double lastFrameWall = wall.now(), fpsT = wall.now(), lastLoop = wall.now(), fps = 0, lastKeepAlive = wall.now();
     int fpsN = 0;
     bool haveFrame = false;
+    double lastStateT = 0;
     while (true) {
         if (quitting_ && !nav_.flying()) break;
+        WebCommand wc;
+        while (webOn_ && web_.popCommand(wc)) applyWebCommand(wc);
         bool got = src_.latest(frame, seq_, 0.25);
         if (got) { seq_ = frame.seq; haveFrame = true; lastFrameWall = wall.now(); }
         else if (src_.ended()) { LOG_INFO("end of video source"); break; }
@@ -93,8 +111,10 @@ int MissionLoop::run() {
         if (recording_ && got) record(frame.image, obs, st);
         if (got && ++fpsN && wall.now() - fpsT > 1.0) { fps = fpsN / (wall.now() - fpsT); fpsN = 0; fpsT = wall.now(); }
 
+        if (webOn_ && wall.now() - lastStateT > 0.1) { web_.publishState(stateJson(obs, st, fps)); lastStateT = wall.now(); }
         bool dump = opt_.dumpEvery > 0 && got && (seq_ % opt_.dumpEvery == 0);
-        if (!opt_.headless || dump) {
+        bool stream = webOn_ && got && web_.streamClients() > 0;
+        if (!opt_.headless || dump || stream) {
             cv::Mat canvas = haveFrame ? frame.image.clone() : cv::Mat(720, 960, CV_8UC3, cv::Scalar(30, 30, 30));
             if (showDebug_ && got) perception_.drawDebug(canvas, obs);
             drawHud(canvas, obs, st, fps, got);
@@ -105,18 +125,19 @@ int MissionLoop::run() {
                 snprintf(name, sizeof(name), "/frame_%06llu.png", (unsigned long long)seq_);
                 cv::imwrite(opt_.dumpDir + name, canvas);
             }
+            if (stream) web_.publishFrame(canvas);
             if (!opt_.headless) {
                 if (std::fabs(opt_.uiScale - 1.0) > 1e-3) cv::resize(canvas, canvas, cv::Size(), opt_.uiScale, opt_.uiScale);
                 cv::imshow(win, canvas);
                 int key = cv::waitKey(1);
                 if (key >= 0 && !handleKey(key & 0xff)) break;
-                if (sim_ && opt_.realtime) {
-                    double target = 1.0 / std::max(1.0, src_.fps());
-                    double dtw = wall.now() - lastLoop;
-                    if (dtw < target) wall.sleep(target - dtw);
-                    lastLoop = wall.now();
-                }
             }
+        }
+        if (sim_ && opt_.realtime && (!opt_.headless || webOn_)) {   // real-time pacing for a window or web viewers
+            double target = 1.0 / std::max(1.0, src_.fps());
+            double dtw = wall.now() - lastLoop;
+            if (dtw < target) wall.sleep(target - dtw);
+            lastLoop = wall.now();
         }
         if (sim_ && (sim_->done() || (nav_.finished() && !sim_->isFlying()))) {
             if (!opt_.headless) { cv::waitKey(500); }
@@ -131,8 +152,34 @@ int MissionLoop::run() {
         nav_.step(o, drone_.state());
     }
     stopRecording();
+    web_.stop();
     if (!opt_.headless) cv::destroyAllWindows();
     return 0;
+}
+
+void MissionLoop::applyWebCommand(const WebCommand& c) {
+    LOG_INFO("web command: %s %s", c.cmd.c_str(), c.arg.c_str());
+    if (c.cmd == "start") handleKey('t');
+    else if (c.cmd == "land") handleKey('l');
+    else if (c.cmd == "emergency") handleKey('e');
+    else if (c.cmd == "record") handleKey('r');
+    else if (c.cmd == "camera") handleKey('v');
+    else if (c.cmd == "tag") handleKey('0' + std::max(0, std::min(3, atoi(c.arg.c_str()))));
+}
+
+std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st, double fps) {
+    StateSnapshot s;
+    s.phase = nav_.phaseName(); s.seg = nav_.segmentsDone(); s.t = nav_.missionTime();
+    s.telemetry = st.valid; s.bat = st.bat; s.tof = st.tof; s.h = st.h; s.yaw = st.yaw; s.pitch = st.pitch; s.roll = st.roll;
+    s.templ = st.templ; s.temph = st.temph; s.fps = fps;
+    s.belly = perception_.downwardCamera(); s.recording = recording_;
+    std::string dn = drone_.name();
+    s.drone = dn.c_str();
+    if (!obs.tags.empty()) { s.tagId = obs.tags.front().id; s.tagX = obs.tags.front().X; }
+    RcCommand rc = nav_.lastRc();
+    s.rc[0] = rc.lr; s.rc[1] = rc.fb; s.rc[2] = rc.ud; s.rc[3] = rc.yaw;
+    s.events = nav_.events;
+    return stateToJson(s);
 }
 
 bool MissionLoop::handleKey(int key) {
