@@ -17,9 +17,9 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 * **Desktop**: enable VNC on the Pi (`sudo raspi-config nonint do_vnc 0`; on Bookworm this is wayvnc, set a
   headless resolution with `sudo raspi-config nonint do_vnc_resolution 1920x1080` if no monitor is attached).
-  Laptop: `scriptsnc_pi.ps1 <pi-address>` opens it with the portable TigerVNC viewer in `C:\dev	igervnc`.
+  Laptop: `scripts/vnc_pi.ps1 <pi-address>` opens it with the portable TigerVNC viewer in `C:/dev/tigervnc`.
 * **Terminal of the Pi's Claude session**: start Claude Code on the Pi inside `tmux new -s claude`. From the
-  laptop, `scripts\pi_shell.ps1 <pi-address>` attaches to that same session (both sides see the same screen;
+  laptop, `scripts/pi_shell.ps1 <pi-address>` attaches to that same session (both sides see the same screen;
   Ctrl+B then D detaches). The laptop session uses plain `ssh` for its own work in other tmux windows.
 * **Drone video and controls**: the web interface served by tello_race on the Pi (in development), opened in a
   browser at `http://<pi-address>:8080`.
