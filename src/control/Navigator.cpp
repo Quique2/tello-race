@@ -373,7 +373,13 @@ void Navigator::doTakeoff(const TelloState& st) {
     } else if (startAtTag_ == 1) {
         beginGap("resume: forward checkpoint", drone_.state());
     } else {
+        // the start line begins on the start marker right in front of the drone: use the same expected-start
+        // gating as after a tag maneuver so a neighbouring segment in view is not taken instead
+        TelloState s2 = drone_.state();
+        acqBackM_ = 0;
+        acqAbsYaw_ = s2.yaw;
         beginAcquire("airborne");
+        acqFromManeuver_ = s2.valid;
     }
 }
 

@@ -96,5 +96,5 @@ real drone. Latest validation with the default configuration (see docs/STRATEGY.
 | Run | Result |
 |---|---|
 | Example course from the slides | 4/4 segments, 46.8 s |
-| 30 random rule-compliant courses (seeds 300-329) | 30/30 completed, mean 51.3 s |
-| 30 random rule-compliant courses (seeds 400-429) | RESULT_B |
+| 30 random rule-compliant courses (seeds 300-329) | 29/30 completed, mean 49.8 s (the failure took the FINISH tag one segment early) |
+| 30 random rule-compliant courses (seeds 400-429) | 29/30 completed, mean 50.6 s (the failure: first segment only 1 m long and bending at once, invisible from the start position) |

@@ -122,7 +122,7 @@ Batch runs (`--track random --episodes 30 --headless --no-realtime`, default con
 | first navigator | 7 / 10 | 37 s | corner cut on bends, coasting straight after a FORWARD tag, tags of other segments |
 | + line-end direction, strict tag association | 25 / 30 | 39 s | previous segment retraced backwards after a failed acquire |
 | + precise FORWARD maneuver, step back after turns, post-command video blind period, start gating | 29 / 30 | 52 s | chord rule noise when the chain end is very close to the tag |
-| + distance-blended end direction (current) | see README | | |
+| + distance-blended end direction, detector hint after maneuvers, capped search back-steps (current) | 58 / 60 | 50 s | one course took the FINISH tag a segment early after a bend hid the next start; one course had a 1 m first segment bending away inside the camera blind zone |
 
 The example course from the competition slides completes in 42-47 s depending on the build. Per-tag cost of
 the precise maneuver (stop, measure, `go`, turn, step back, acquire) is about 6 s; `tag.forward_fast_path = true`
