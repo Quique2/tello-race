@@ -80,7 +80,9 @@ try it without the drone: `tello_race sim --headless --set web.enabled=1` then o
 
 From anywhere: on the Pi ground station, `tailscale serve --bg 8080` exposes the page to your tailnet, and
 `tailscale funnel --bg 8080` gives a public HTTPS link (Funnel must be enabled once in the Tailscale admin
-console). Keep the operator token secret; share the viewer token for spectators.
+console). Keep the operator token secret; share the viewer token for spectators. The complete brief for setting
+up the Pi ground station (build, Tailscale, VNC, drone Wi-Fi plus internet, Funnel) is `docs/PI_PROMPT.md`;
+progress between the two machines is tracked in `docs/HANDOFF.md`.
 
 **Mission / manual toggle.** The header has two buttons. MISSION is the autonomous mode (START runs the race
 navigator). MANUAL hands the sticks to the browser: TAKE OFF, then keys `W/S` forward/back, `A/D` left/right,

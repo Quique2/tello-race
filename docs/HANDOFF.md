@@ -26,6 +26,18 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 (laptop) tokens and Pi deployment plan
+* Tokens decided by the user: operator (full access) `quiquepro`, viewer `watch`, both in `config/default.ini`
+  (private repo; never paste the operator token into HANDOFF, logs or a shared link).
+* `docs/PI_PROMPT.md` is the complete brief for the Pi's Claude Code session: install, Linux build, Tailscale
+  (`--ssh`), VNC, drone Wi-Fi + internet at the same time (`ipv4.never-default`), Funnel for port 8080, first
+  real-drone session with the user present, reporting format. The Pi session appends its results below.
+* Needed from the Pi (in this order): Tailscale IP/name + VNC port, Linux build result (portability fixes are
+  welcome in src/tello, src/vision/FrameSource.cpp and CMake only), `sim` smoke test, network profile verified
+  (`ip route` default stays on eth0/usb0 while `tello` is up), Funnel URL (without token), then `telemetry` on the
+  real drone and the perception fps reported by the web page (must stay >= 10 fps; if lower, try
+  `--set camera.width=640 --set camera.height=480` after `setresolution low`, and report).
+
 ### 2026-09-12 (laptop) web interface
 * Embedded web interface added (civetweb, fetched by CMake with CMAKE_POLICY_VERSION_MINIMUM 3.5): `--set web.enabled=1`,
   page at port 8080, MJPEG stream of the annotated view, WebSocket telemetry at 10 Hz, commands start/land/
