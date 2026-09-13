@@ -204,7 +204,7 @@ bool MissionLoop::restartVideo(const char* why) {
     // re-initialises its encoder and ignores a streamon that arrives too early. Back off on each try,
     // and never report success until a frame has actually been decoded.
     for (int attempt = 1; attempt <= 3; ++attempt) {
-        double settle = 0.8 * attempt;
+        double settle = 1.5 * attempt;   // the drone acks streamon and stays mute if it is still switching
         LOG_WARN("video: re-requesting the stream (%s, attempt %d/3, settle %.1fs)", why, attempt, settle);
         src_.stop();
         std::string r;
@@ -217,12 +217,21 @@ bool MissionLoop::restartVideo(const char* why) {
         clock_.sleep(settle);
         std::string e;
         if (!src_.start(&e)) { LOG_ERROR("video: re-open failed: %s", e.c_str()); clock_.sleep(0.5); continue; }
-        if (src_.waitFirstFrame(4.0)) {
+        if (src_.waitFirstFrame(3.0)) {
             seq_ = 0;
             LOG_INFO("video: stream re-opened, frames flowing (%s)", why);
             return true;
         }
-        LOG_WARN("video: re-opened but no frame arrived within 4 s");
+        // Nothing arrived. Ask again now that the receiving socket is bound: after a camera change the
+        // Tello answers "ok" to streamon while it is still bringing the encoder up, and sends nothing.
+        LOG_WARN("video: no frame yet, asking the drone for the stream again");
+        drone_.streamOn();
+        if (src_.waitFirstFrame(5.0)) {
+            seq_ = 0;
+            LOG_INFO("video: stream re-opened after a second streamon (%s)", why);
+            return true;
+        }
+        LOG_WARN("video: still no frames after two streamon requests");
     }
     LOG_ERROR("video: the drone did not resume the stream after 3 attempts (%s)", why);
     return false;
