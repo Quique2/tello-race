@@ -29,8 +29,14 @@ $('spd').oninput=e=>{$('spdv').textContent=e.target.value;};
 const key={w:0,s:0,a:0,d:0,r:0,f:0,q:0,e:0};let padL={x:0,y:0},padR={x:0,y:0},lastSent='';
 function sticks(){const v=+$('spd').value;let lr=(key.d-key.a)+padL.x,fb=(key.w-key.s)-padL.y,ud=(key.r-key.f)-padR.y,yaw=(key.e-key.q)+padR.x;
  const c=x=>Math.round(Math.max(-1,Math.min(1,x))*v);return [c(lr),c(fb),c(ud),c(yaw)];}
-setInterval(()=>{if(mode!=='manual'||role!=='operator')return;const s=sticks().join(',');const zero=(s==='0,0,0,0');
- if(!zero||lastSent!==s){send('rc',s);lastSent=s;}},100);
+let lastBeat=0,hiddenAt=0,wakeLock=null;
+setInterval(()=>{if(mode!=='manual'||role!=='operator')return;const s=sticks().join(',');const zero=(s==='0,0,0,0');const now=Date.now();
+ if(!zero||lastSent!==s||(flying&&now-lastBeat>250)){send('rc',s);lastSent=s;lastBeat=now;}},100);
+/* phones lock the screen and browsers throttle hidden tabs to ~1 timer/s, which trips the 0.5 s dead-man: keep the
+   screen awake in manual mode, stop the sticks when the page is hidden, and say so when it comes back */
+async function keepAwake(){try{if(!wakeLock&&navigator.wakeLock&&mode==='manual'&&!document.hidden)wakeLock=await navigator.wakeLock.request('screen');}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.hidden){for(const i in key)key[i]=0;padL={x:0,y:0};padR={x:0,y:0};if(mode==='manual')send('rc','0,0,0,0');hiddenAt=Date.now();wakeLock=null;}
+ else{if(hiddenAt&&mode==='manual'&&flying)msg('the page was in the background for '+((Date.now()-hiddenAt)/1000).toFixed(0)+' s: the sticks were stopped and the drone hovered');hiddenAt=0;keepAwake();}});
 document.addEventListener('keydown',e=>{if(mode!=='manual'||e.target.tagName==='INPUT')return;const k=e.key.toLowerCase();
  if(k in key){key[k]=1;e.preventDefault();}if(e.key===' '){for(const i in key)key[i]=0;padL={x:0,y:0};padR={x:0,y:0};e.preventDefault();}});
 document.addEventListener('keyup',e=>{const k=e.key.toLowerCase();if(k in key)key[k]=0;});
@@ -44,7 +50,7 @@ function pad(id,st){const el=$(id),kn=el.querySelector('.knob');let act=false;
  el.addEventListener('pointerup',rel);el.addEventListener('pointercancel',rel);}
 pad('padL',padL);pad('padR',padR);
 function setMode(m){mode=m;document.body.classList.toggle('manual',m==='manual');document.body.classList.toggle('mission',m!=='manual');
- $('mMission').classList.toggle('sel',m!=='manual');$('mManual').classList.toggle('sel',m==='manual');}
+ $('mMission').classList.toggle('sel',m!=='manual');$('mManual').classList.toggle('sel',m==='manual');if(m==='manual')keepAwake();else if(wakeLock){wakeLock.release().catch(()=>{});wakeLock=null;}}
 function connect(){const proto=location.protocol==='https:'?'wss://':'ws://';ws=new WebSocket(proto+location.host+'/ws'+q);
  ws.onopen=()=>{$('dot').classList.add('on');$('conn').textContent='connected';};
  ws.onclose=()=>{$('dot').classList.remove('on');$('conn').textContent='reconnecting';setTimeout(connect,2000);};

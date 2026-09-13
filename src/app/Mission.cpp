@@ -166,8 +166,10 @@ int MissionLoop::run() {
         if (manual_) {
             int r0 = manualRc_[0], r1 = manualRc_[1], r2 = manualRc_[2], r3 = manualRc_[3];
             if (wall.now() - manualRcT_ > 0.5) {   // dead-man: no fresh sticks from the page -> hover
-                if ((r0 || r1 || r2 || r3) && drone_.isFlying() && wall.now() - lastStaleLog_ > 2.0) {
-                    LOG_WARN("manual sticks released: no input from the page for %.1fs (operator link?)", wall.now() - manualRcT_);
+                // The page heartbeats the sticks (zeros included) 4x/s while airborne, so silence means the page
+                // is hidden/throttled or the operator link is down, not merely idle sticks.
+                if (manualRcT_ > 0 && drone_.isFlying() && wall.now() - lastStaleLog_ > 2.0) {
+                    LOG_WARN("manual: no stick input or heartbeat from the page for %.1fs (page in background, or operator link?)", wall.now() - manualRcT_);
                     lastStaleLog_ = wall.now();
                 }
                 r0 = r1 = r2 = r3 = 0;
@@ -290,7 +292,7 @@ bool MissionLoop::restartVideo(const char* why) {
         // lets the drone's first packets hit a closed port, and it then stops sending altogether.
         std::string e;
         if (!src_.start(&e)) { LOG_ERROR("video: re-open failed: %s", e.c_str()); clock_.sleep(0.5); continue; }
-        if (src_.waitFirstFrame(4.0)) {
+        if (src_.waitFirstFrame(5.0)) {
             seq_ = 0;
             LOG_INFO("video: stream re-opened, frames flowing (%s, %.1fs settle)", why, settle);
             return true;
@@ -366,6 +368,8 @@ bool MissionLoop::handleKey(int key) {
                 return true;
             }
             bool on = !td->downvision();
+            if (drone_.state().valid && drone_.state().temph >= 75)   // 81 C: the switch failed 3/3 with bytes arriving
+                notice("drone is hot (" + std::to_string(drone_.state().temph) + " C): camera switching is unreliable when hot, let it cool");
             src_.stop();
             std::string r;
             drone_.command("streamoff", &r, 3.0);   // the belly camera streams 320x240 grey, the front 960x720:

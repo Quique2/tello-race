@@ -45,14 +45,16 @@ bool VideoCaptureSource::start(std::string* err) {
         // Tello H.264 UDP stream through FFmpeg: ask for the lowest-latency demuxer/decoder settings.
         setEnv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0|max_delay;0");
         setEnv("OPENCV_FFMPEG_LOGLEVEL", "-8");
-        setEnv("OPENCV_FFMPEG_READ_TIMEOUT", "4000");   // ms: a silent stream fails in 4 s, not OpenCV's 30 s default
-        setEnv("OPENCV_FFMPEG_OPEN_TIMEOUT", "6000");   // ms: open() has its own timeout, also 30 s by default
+
         std::string url = spec_ == "udp" ? "udp://0.0.0.0:11111" : spec_;
         LOG_INFO("Opening video stream %s ...", url.c_str());
-        if (!cap_.open(url, cv::CAP_FFMPEG)) {
+        // Bounded open/read: a silent stream otherwise blocks open() for OpenCV's default 30 s (measured twice
+        // on the Pi). The environment variables are not honoured; the capture properties are.
+        const std::vector<int> params = {cv::CAP_PROP_OPEN_TIMEOUT_MSEC, 6000, cv::CAP_PROP_READ_TIMEOUT_MSEC, 4000};
+        if (!cap_.open(url, cv::CAP_FFMPEG, params)) {
             LOG_WARN("Low-latency open failed, retrying with FFmpeg defaults");
             setEnv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "");
-            if (!cap_.open(url, cv::CAP_FFMPEG)) { if (err) *err = "cannot open stream " + url; return false; }
+            if (!cap_.open(url, cv::CAP_FFMPEG, params)) { if (err) *err = "cannot open stream " + url; return false; }
         }
         cap_.set(cv::CAP_PROP_BUFFERSIZE, 1);
     }

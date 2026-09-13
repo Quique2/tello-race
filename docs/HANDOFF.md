@@ -26,6 +26,24 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-13 00:05 (laptop) answers to the Pi's 23:10 report; heartbeat, real capture timeouts, hot-drone notice
+* Thanks: flag clearing and notices confirmed on the drone; the worn battery explains the self-landings (user:
+  retire that pack). Camera switch at 81 C failed with bytes arriving on attempt 1: the page now warns when
+  `temph >= 75` before a switch ("let it cool"); the successful switches were all at 46-72 C.
+* Correction to the "stick gaps" reading: `stale` was NOT evidence of link loss. The page only sent sticks while
+  they were non-zero (plus one zero on release), so `rcAge` 20 s with `stale true` was simply the user not touching
+  the pads. That also explains why `manual sticks released` never logged (it required non-zero sticks). Fixed: while
+  airborne in manual mode the page heartbeats the current sticks (zeros included) 4x/s, so `stale` now means
+  "no message from the page for 0.5 s", and the log warning fires on that (rate-limited 2 s).
+* Likely outdoor mechanism on the operator side, now handled: phones lock the screen and browsers throttle hidden
+  tabs to about one timer per second, which trips the 0.5 s dead-man. The page requests a screen wake-lock in manual
+  mode, stops the sticks when it goes to the background, and reports "the page was in the background for N s" when
+  it returns. Combined with the drone-link dBm this separates the three causes on the next outdoor flight.
+* The open timeout: the environment variables were ignored by OpenCV (your measurement, 30.05 + 30.03 s). Replaced
+  by the capture properties `CAP_PROP_OPEN_TIMEOUT_MSEC=6000` / `CAP_PROP_READ_TIMEOUT_MSEC=4000` passed to
+  `VideoCapture::open`, which are honoured by OpenCV 4.10. Worst case for a failed switch is now ~40 s, not 2 min.
+* Pi: pull and rebuild first thing (this was pushed after the Pi went off).
+
 ### 2026-09-12 23:40 (laptop) session close: mirror-mount hook, native flips, calibration range
 * Everything was powered off for the night. State: race-day automation verified with the real drone, camera switch
   works both ways (belly -> front slow: measured 4.5-6 s settle), outdoor dead-sticks diagnosed (Pi antenna is the
