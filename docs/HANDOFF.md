@@ -26,6 +26,47 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 20:22 (pi) camera switch test with 01516db: front->belly works, belly->front leaves the drone mute
+Binary rebuilt at 20:07:05 (after 01516db). Three power-ons, all joined and brought the page up without help.
+* **drone-watch timing:** SSID seen -> joined -> ping OK -> ground station started in about 0.5 s every time
+  (20:12:49.7, 20:16:01.9, 20:19:53.8). tello_race connected 0.1–6 s later (the first `command` often times out
+  after power-on). Page up about 7 s after the SSID was seen. The drone going silent was handled as designed: the
+  ground station stopped after 20 s unreachable (20:15:09) or when the network disappeared (20:19:31), then the Pi
+  waited and rejoined on the next power-on.
+* **Run 20:12:50** (bat 59 %): the user flew in MANUAL (takeoff +26, land +99). No camera command, no video gaps.
+  The drone went silent at +121 s (battery swap).
+* **Run 20:16:02** (bat 93 %), all commands from the page by the user:
+  - +30.4 and +32.7 `camera` -> `WRN not switching cameras while flying` (guard OK, video unaffected at 24 fps).
+  - Land +71.9, takeoff +79.9, land +99.6.
+  - **Switch 1, front -> belly, on the ground: OK.** +104.67 `camera` -> +104.81 `video: downward (belly) camera`
+    -> `re-requesting the stream (belly camera, attempt 1/3)` -> +105.88 `Opening video stream` -> +105.97
+    `video: stream re-opened`. Video back after 1.3 s; **belly fps 15.9–17.2** (front 24). The user then took off
+    on the belly camera (+109.5) and landed (+133.3).
+  - **Switch 2, belly -> front, on the ground: FAILED.** +139.35 `camera` -> +139.45 `video: front camera` ->
+    `re-requesting the stream (front camera, attempt 1/3)` -> +140.57 `Opening video stream` -> +141.01
+    `video: stream re-opened`, but **no frames**: +153.31 `ERR video: no frames for a long time, stream ended?` ->
+    `re-requesting the stream (stream stopped, attempt 1/3)` -> +154.34 `Opening video stream` -> OpenCV
+    `Stream timeout triggered after 30027 ms` -> +184.37 `WRN Low-latency open failed, retrying with FFmpeg
+    defaults`. The drone was powered off at ~20:19:12 (+190 s) while that second open was still blocking.
+    tello_race **did not exit** (it was stopped by drone-watch when the network went away).
+  - Replies: the log has **no** `command '...' answered '...'` warning and no timeout for `streamoff`,
+    `downvision 0` or `streamon`. `TelloDrone::command` logs both, so all three were answered `ok` (the reply text is
+    only printed at `--log-level debug`). Yet wlan0 received only **1–2 KiB/s** from +141 s on, which is
+    telemetry alone: **the drone acknowledged streamon but sent no video after `downvision 0`.** The status `fps`
+    stayed frozen at 15.9 (the last value; it isn't reset when frames stop).
+* **Run 20:19:54** after the power cycle (bat 77 %): front camera **23.6–23.9 fps**, telemetry true. Power-off still
+  clears it.
+* For the laptop (nothing changed on the Pi side):
+  1. The belly -> front direction is the problem. The drone acks `streamoff` / `downvision 0` / `streamon` and stays
+     mute. Possible next steps: a longer settle after `downvision 0` (several seconds), `streamon` repeated until UDP
+     bytes arrive, or checking UDP bytes on 11111 before opening FFmpeg instead of trusting `ok`. To see the replies,
+     run with `--log-level debug` (`scripts/pi/ground_station.sh start --log-level debug` passes it through).
+  2. **The recovery blocks the mission loop:** the FFmpeg open inside `restartVideo()` waited 30 s (+154 -> +184) and
+     then started a second open. While it blocks, the loop can't step the navigator, send the dead-man rc or handle
+     page commands. That's harmless on the ground, but any path that calls it while flying could leave the drone
+     without a land. Open with a short timeout, or open on another thread.
+  3. Minor: status `fps` should drop to 0 when frames stop, otherwise the page shows a healthy-looking 15.9.
+
 ### 2026-09-12 20:05 (laptop) root cause of the 502 loop: the camera switch kills the video stream
 * The user reported the page returning HTTP 502 and said it started when he switched cameras. The log confirms it
   (`logs/ground_station.log`, run of 19:46:52, battery 79 %, six good minutes including a real manual take-off):
