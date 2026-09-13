@@ -26,6 +26,27 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 21:58 (laptop) measured: the drone honours streamon only ~3 s after the camera change
+* Run 21:46:52 (battery 39 %), belly switch: settle 1.0 s -> `streamon` ok, no frames; 2.0 s -> ok, no frames;
+  **3.0 s -> ok, `frames flowing` 1 s later**. So the drone answers `ok` while it is still switching and ignores
+  the request; ~3 s after `streamoff` + `downvision` it streams. The Pi's byte counters showed no datagrams at all
+  during the failures, so the earlier ICMP port-unreachable theory (21:35 entry) was wrong. Retracted.
+* Then a second CAMERA click, queued by the user during the 24 s of retries, was applied 50 ms after the belly
+  stream came up and switched straight back to the front with a 1.0 s settle, which failed again. From the page it
+  looked as if nothing had changed.
+* Shipped (this commit): settle before `streamon` is now 3.0 / 4.5 / 6.0 s per attempt, socket bound right after
+  `streamon`, `waitFirstFrame(4 s)` proves a decoded frame; the second `streamon` nudge never helped and is gone
+  (fewer commands hammering the drone); CAMERA clicks arriving within 3 s of a finished switch are dropped.
+* Expected now: a switch takes ~4-5 s and the page freezes for that time (the restart runs on the mission loop);
+  acceptable on the ground. The belly camera is not used by the mission or by manual flight, so this is a
+  convenience feature, not a competition blocker.
+* Pi test protocol: drone on the ground, `--log-level debug`; front -> belly, wait until the page shows the belly
+  image, wait 10 s more, belly -> front. Report the `frames flowing (... settle)` lines. To check whether video is
+  arriving use the interface counter only (`/sys/class/net/wlan0/statistics/rx_bytes` per second: ~300+ KiB/s with
+  video, ~2 KiB/s telemetry only). No packet-capture tools.
+* Housekeeping: the drone was at 39 % and was wedged (Wi-Fi up, DHCP/SDK/video dead) after abrupt power-offs;
+  charge it and power it off between tests.
+
 ### 2026-09-12 21:35 (laptop) regression found: the delay after streamon is what makes the drone go mute
 * Test with 3f74dc2 (user, drone on the ground, `--log-level debug`): the **belly switch now fails too**, all three
   attempts. That is a regression: with 01516db the same switch worked in 93 ms. Log: `downvision 1` ok, `streamoff`

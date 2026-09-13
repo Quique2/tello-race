@@ -59,6 +59,7 @@ private:
     uint64_t seq_ = 0;
     int startAtTag_ = 0;
     int videoRecoveries_ = 0;
+    double lastCameraSwitchT_ = 0;
     std::string recBase_;
     WebServer* web_ = nullptr;   // owned by runFly/runSim so it outlives simulator episodes
     bool webOn_ = false;
@@ -203,8 +204,12 @@ bool MissionLoop::restartVideo(const char* why) {
     // Switching back to the 960x720 front camera needs longer than the 320x240 belly one: the drone
     // re-initialises its encoder and ignores a streamon that arrives too early. Back off on each try,
     // and never report success until a frame has actually been decoded.
+    // Measured on the Tello Talent (2026-09-12, battery 39 %): after streamoff and a camera change the drone
+    // answers "ok" to a streamon sent 1 s or 2 s later and sends nothing; a streamon sent 3 s later streams.
+    // So wait long enough BEFORE streamon, bind the socket right after it, and prove a frame was decoded.
+    static const double kSettle[3] = {3.0, 4.5, 6.0};
     for (int attempt = 1; attempt <= 3; ++attempt) {
-        double settle = 1.0 * attempt;   // time for the encoder to switch: it belongs BEFORE streamon
+        double settle = kSettle[attempt - 1];
         LOG_WARN("video: re-requesting the stream (%s, attempt %d/3, settle %.1fs)", why, attempt, settle);
         src_.stop();
         std::string r;
@@ -218,21 +223,12 @@ bool MissionLoop::restartVideo(const char* why) {
         // lets the drone's first packets hit a closed port, and it then stops sending altogether.
         std::string e;
         if (!src_.start(&e)) { LOG_ERROR("video: re-open failed: %s", e.c_str()); clock_.sleep(0.5); continue; }
-        if (src_.waitFirstFrame(3.0)) {
+        if (src_.waitFirstFrame(4.0)) {
             seq_ = 0;
-            LOG_INFO("video: stream re-opened, frames flowing (%s)", why);
+            LOG_INFO("video: stream re-opened, frames flowing (%s, %.1fs settle)", why, settle);
             return true;
         }
-        // Nothing arrived. Ask again now that the receiving socket is bound: after a camera change the
-        // Tello answers "ok" to streamon while it is still bringing the encoder up, and sends nothing.
-        LOG_WARN("video: no frame yet, asking the drone for the stream again");
-        drone_.streamOn();
-        if (src_.waitFirstFrame(5.0)) {
-            seq_ = 0;
-            LOG_INFO("video: stream re-opened after a second streamon (%s)", why);
-            return true;
-        }
-        LOG_WARN("video: still no frames after two streamon requests");
+        LOG_WARN("video: no frame within 4 s of streamon (settle %.1fs)", settle);
     }
     LOG_ERROR("video: the drone did not resume the stream after 3 attempts (%s)", why);
     return false;
@@ -294,6 +290,10 @@ bool MissionLoop::handleKey(int key) {
             auto* td = dynamic_cast<TelloDrone*>(&drone_);
             if (!td) { LOG_INFO("camera switch is only available on the real drone"); return true; }
             if (nav_.flying() || drone_.isFlying()) { LOG_WARN("not switching cameras while flying"); return true; }
+            if (wallNow() - lastCameraSwitchT_ < 3.0) {   // a switch blocks for seconds; clicks queued meanwhile are dropped
+                LOG_WARN("camera switch ignored: the previous one finished %.1fs ago", wallNow() - lastCameraSwitchT_);
+                return true;
+            }
             bool on = !td->downvision();
             src_.stop();
             std::string r;
@@ -304,6 +304,7 @@ bool MissionLoop::handleKey(int key) {
             }
             videoRecoveries_ = 0;
             if (!restartVideo(on ? "belly camera" : "front camera")) LOG_ERROR("video did not come back after the camera switch");
+            lastCameraSwitchT_ = wallNow();
             return true;
         }
         case 'd': showDebug_ = !showDebug_; return true;
