@@ -26,6 +26,24 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 23:40 (laptop) session close: mirror-mount hook, native flips, calibration range
+* Everything was powered off for the night. State: race-day automation verified with the real drone, camera switch
+  works both ways (belly -> front slow: measured 4.5-6 s settle), outdoor dead-sticks diagnosed (Pi antenna is the
+  weak transmitter; keep-alive no longer blocks in flight; link dBm / input age / STICKS RELEASED on the page),
+  stuck flying flag fixed, page notices for ignored actions.
+* Tomorrow the user mounts a 3D-printed mirror so the FRONT camera looks down (colour view for the line and tags).
+  Prepared: `camera.flip = none|horizontal|vertical|both` (config) flips live frames before perception, because a
+  mirror produces a mirror image and AprilTags do not decode mirrored. The ground auto-calibration accepted pitch
+  only up to 60 deg; raised to 85 so the ~60-80 deg mirror view calibrates. After mounting: choose the flip that
+  makes printed text readable, run `calib-ground` (or let the auto-calibration from floor tags set the pitch),
+  check the blind-zone figures, prefer a front-surface mirror.
+* Acrobatics: the SDK `flip f|b|l|r` is wired to four FLIP buttons in the manual panel (two-click; manual mode,
+  airborne, battery >= 55 % checks; the drone refuses below ~50 %). Needs ~2 m clear all round and good light for
+  the vision positioning. Also available in SDK 3.0: `throwfly`; with the RMTT expansion kit (not mounted): LED
+  matrix and RGB LED effects.
+* **Pi: pull and rebuild first thing** (`git pull --ff-only && cmake --build --preset linux-release`); the Pi was
+  off when this was pushed. The drone-watch service uses the built binary, so the new page needs that rebuild.
+
 ### 2026-09-12 23:10 (pi) 21a4e08 on the drone: flag clearing and notices work; a worn battery; stick gaps not logged; belly switch failed 3/3
 Data: per-second samples of the state JSON (`wifi`, `rcAge`, `stale`, `h`, `tof`, `bat`, notices) plus the wlan0 byte
 rate, and the tello_race log (debug). Byte counters only. The user flew in MANUAL, indoors/nearby (link never

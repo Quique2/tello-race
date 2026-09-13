@@ -84,6 +84,12 @@ console). Keep the operator token secret; share the viewer token for spectators.
 up the Pi ground station (build, Tailscale, VNC, drone Wi-Fi plus internet, Funnel) is `docs/PI_PROMPT.md`;
 progress between the two machines is tracked in `docs/HANDOFF.md`.
 
+**Mirror mount and flips.** If a mirror in front of the lens aims the camera down, set `camera.flip` in the config
+(`horizontal`, `vertical` or `both`) so the image is un-mirrored before perception; pick the value that makes
+printed text readable on the page, then redo `calib-ground` (the auto-calibration accepts pitch up to 85 degrees).
+The manual panel has FLIP forward/back/left/right buttons: the Tello performs the flip itself; it refuses below
+about 50% battery, and needs about 2 m of clear space all round.
+
 **Outdoors and range.** The drone is the Wi-Fi access point and the Pi's built-in antenna is the weak end of the
 link: through walls expect tens of metres at best, in open air 50-100 m. Keep the Pi near a window or take it
 outside. The page header shows the drone link in dBm and, in manual flight, the age of the last stick input; if

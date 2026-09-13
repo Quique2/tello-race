@@ -21,6 +21,7 @@ bind('bEmg',()=>armed('bEmg','click again: STOP MOTORS',()=>send('emergency')));
 bind('bRec',()=>send('record'));bind('bRec2',()=>send('record'));
 bind('bCam',()=>{send('camera');setTimeout(video,1500);});bind('bCam2',()=>{send('camera');setTimeout(video,1500);});
 bind('bTakeoff',()=>armed('bTakeoff','click again to TAKE OFF',()=>send('takeoff')));
+for(const [id,d] of [['bFlipF','f'],['bFlipB','b'],['bFlipL','l'],['bFlipR','r']])bind(id,()=>armed(id,'click again: FLIP',()=>send('flip',d)));
 bind('mMission',()=>send('mode','mission'));bind('mManual',()=>{if(send('mode','manual'))msg('manual mode: TAKE OFF, then keys W/S A/D R/F Q/E or the pads');});
 $('resume').onchange=e=>send('tag',e.target.value);
 $('spd').oninput=e=>{$('spdv').textContent=e.target.value;};

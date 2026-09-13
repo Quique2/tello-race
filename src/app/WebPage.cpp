@@ -61,7 +61,8 @@ static const char* kPageB = R"HTML(<header><h1>tello_race</h1><span><span class=
   <p class="kv" style="margin:10px 0 2px">speed <b id="spdv">40</b></p><input type="range" id="spd" min="10" max="100" value="40">
   <div class="pads"><div class="pad" id="padL"><div class="knob"></div><div class="lbl">forward/back - left/right</div></div>
   <div class="pad" id="padR"><div class="knob"></div><div class="lbl">up/down - yaw</div></div></div>
-  <p class="hint">keys: W/S forward-back, A/D left-right, R/F up-down, Q/E yaw, space = stop. Sticks release to hover if the link drops.</p></div>
+  <div class="btns" style="margin-top:10px"><button id="bFlipF">FLIP forward</button><button id="bFlipB">FLIP back</button><button id="bFlipL">FLIP left</button><button id="bFlipR">FLIP right</button></div>
+  <p class="hint">keys: W/S forward-back, A/D left-right, R/F up-down, Q/E yaw, space = stop. Sticks release to hover if the link drops. Flips need over 50% battery and 2 m of clear space all round.</p></div>
  <div class="panel"><h2>Events</h2><div class="ev" id="ev"></div></div>
  <div class="panel"><h2>Access</h2><input type="text" id="tok" placeholder="token (operator or viewer)"><p><button id="bTok">apply token</button></p></div>
 </aside><div id="msg" hidden></div></main>

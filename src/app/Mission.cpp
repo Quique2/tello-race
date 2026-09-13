@@ -88,6 +88,7 @@ private:
     int manualRc_[4] = {0, 0, 0, 0};
     double manualRcT_ = 0;
     double lastStaleLog_ = 0;
+    int flipCode_ = 2;     // cv::flip code for live frames; 2 = no flip (camera.flip)
     std::string notice_;   // last one-line message for the page (shown once per id)
     int noticeId_ = 0;
     bool prevFlying_ = false;
@@ -102,6 +103,11 @@ int MissionLoop::run() {
     startAtTag_ = opt_.startAtTag;
     const std::string win = "tello_race";
     if (!opt_.headless) cv::namedWindow(win, cv::WINDOW_AUTOSIZE);
+    if (!sim_) {
+        std::string f = cfg_.getString("camera.flip", "none");
+        flipCode_ = f == "horizontal" ? 1 : f == "vertical" ? 0 : f == "both" ? -1 : 2;
+        if (flipCode_ != 2) LOG_INFO("camera.flip = %s: live frames are flipped before perception (mirror mount)", f.c_str());
+    }
     if (opt_.record) startRecording();
     webOn_ = web_ && cfg_.getBool("web.enabled", false);
     if (webOn_ && !web_->running()) {
@@ -129,6 +135,7 @@ int MissionLoop::run() {
         WebCommand wc;
         while (webOn_ && web_->popCommand(wc)) applyWebCommand(wc);
         bool got = src_.latest(frame, seq_, 0.25);
+        if (got && flipCode_ != 2) cv::flip(frame.image, frame.image, flipCode_);   // mirror mount: un-mirror before perception
         if (got) { seq_ = frame.seq; haveFrame = true; lastFrameWall = wall.now(); videoRecoveries_ = 0; }
         else if (src_.ended()) {
             // A live Tello stream stops on a camera switch or a Wi-Fi hiccup. Ask for it again and
@@ -230,6 +237,18 @@ void MissionLoop::applyWebCommand(const WebCommand& c) {
             manualRc_[0] = std::max(-100, std::min(100, a)); manualRc_[1] = std::max(-100, std::min(100, b));
             manualRc_[2] = std::max(-100, std::min(100, d)); manualRc_[3] = std::max(-100, std::min(100, e));
             manualRcT_ = wallNow();
+        }
+    }
+    else if (c.cmd == "flip") {   // SDK "flip f|b|l|r": the Tello does the acrobatics itself
+        std::string d = c.arg.empty() ? "" : c.arg.substr(0, 1);
+        if (d != "f" && d != "b" && d != "l" && d != "r") notice("flip: direction must be f, b, l or r");
+        else if (!manual_) notice("flips are only available in MANUAL mode");
+        else if (!drone_.isFlying()) notice("flip ignored: the drone is on the ground");
+        else if (drone_.state().valid && drone_.state().bat < 55) notice("flip refused: the Tello needs more than about 50 % battery");
+        else {
+            std::string r;
+            bool ok = drone_.command("flip " + d, &r, 8.0);   // blocks ~2 s; the rc stream resumes afterwards
+            notice(ok ? "flip done" : "flip refused by the drone: " + (r.empty() ? std::string("no reply") : r));
         }
     }
     else if (c.cmd == "takeoff") {
