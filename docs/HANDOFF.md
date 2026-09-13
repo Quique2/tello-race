@@ -51,6 +51,11 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
   Wi-Fi internet over the cable (Windows Internet Connection Sharing, laptop = 192.168.137.1, service set to start
   automatically). The Pi pins 192.168.137.10 on eth0 (step 0b of PI_PROMPT.md); its Wi-Fi is free for the drone.
   The laptop reaches the Pi at 192.168.137.10 (VNC 5900, SSH 22, web page 8080) with no internet hop.
+* Laptop session's SSH public key (Pi: append to `~/.ssh/authorized_keys`, then the laptop reaches the Pi at
+  192.168.137.10 without a password): `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIISO7xlpSI2GqG78umyexfVa04bICZ8vUTTq3lPiuRgl claude-laptop-tello`
+* Observed 2026-09-12 18:18 over VNC: `HDMI-A-1` vanished from the Screens panel and VNC fell back to `DSI-2`; the
+  connector is only present while a powered display or dummy plug is attached. PI_PROMPT step 0c now asks to force it
+  with `video=HDMI-A-1:1920x1080@60D` in cmdline.txt so remote sessions always have the big screen.
 * Tokens decided by the user: operator (full access) `[web] token` and viewer `watch`, both in `config/default.ini`
   (private repo; never paste the operator token into HANDOFF, logs or a shared link).
 * `docs/PI_PROMPT.md` is the complete brief for the Pi's Claude Code session: install, Linux build, Tailscale

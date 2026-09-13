@@ -46,7 +46,9 @@ Turn this Pi into a headless ground station that:
 
 **0. Keep the Pi usable on its own: SSH, fixed address, screen switching.** Do this first.
 
-*0a. SSH as the safety net.* `sudo raspi-config nonint do_ssh 0`, confirm `ss -ltn | grep :22`. The Pi is wired
+*0a. SSH as the safety net.* `sudo raspi-config nonint do_ssh 0`, confirm `ss -ltn | grep :22`. Add the laptop
+session's public key to `~/.ssh/authorized_keys` (mode 600) so the laptop can log in without a password:
+`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIISO7xlpSI2GqG78umyexfVa04bICZ8vUTTq3lPiuRgl claude-laptop-tello`. The Pi is wired
 to the laptop's Ethernet port and the laptop shares its internet over that cable (Windows Internet Connection
 Sharing: laptop = 192.168.137.1, DHCP for the Pi). The laptop will use `ssh <user>@192.168.137.10` once 0b is done.
 Report the Pi's username.
@@ -75,6 +77,13 @@ Leave the home Wi-Fi profile on DHCP: while the cable is in, the Pi's Wi-Fi is f
   disable `HDMI-A-1`;
 - on any failure (HDMI output absent, script crash, wayvnc restart) fall back to `DSI-2` active. Never leave both
   screens off.
+
+`HDMI-A-1` only exists while something is plugged into the HDMI port and powered (check
+`cat /sys/class/drm/card*-HDMI-A-1/status`); when it disappears the compositor drops the output and VNC falls back to
+`DSI-2`, which is the intended safety behaviour. So that remote sessions get the big screen even with no monitor
+attached, force the connector on in `/boot/firmware/cmdline.txt` by appending `video=HDMI-A-1:1920x1080@60D`
+(on one line with the rest, `D` = force digital output) and reboot; verify that the status file reads `connected`
+and that the Control Centre lists both screens.
 
 Implementation notes. Check what is there: compositor (`echo $XDG_SESSION_DESKTOP`; labwc on Trixie, wayfire on
 Bookworm), `wayvnc --version` (the event stream `wayvncctl event-receive` needs 0.7 or newer; upgrade from the
