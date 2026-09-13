@@ -26,7 +26,29 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
-<<<<<<< HEAD
+### 2026-09-12 22:40 (laptop) outdoor flying: range, dead sticks, speed slider
+* User report: camera switching now works both ways (belly -> front is slow: that is the measured 4.5-6 s settle).
+  Outdoors the drone stops answering the sticks but still lands and still streams video; the speed slider "does
+  nothing".
+* Slider: verified in the real page with headless Chrome: slider 100 + W = [0,100,0,0], slider 25 + pad = [25,13,0,0].
+  It works; the Tello's rc response is strongly non-linear (below ~30 it barely moves) and wind dominates outdoors.
+* Log of the outdoor runs (22:13-22:18): no page reconnects, `battery?` replies prompt during the 22:18 flight but
+  three 3 s timeouts right after landing: the drone link was marginal outdoors while video (fire-and-forget from the
+  drone) kept arriving. `land` is a retried command, so it still got through.
+* Design flaw fixed: the ground-station keep-alive sent a blocking `battery?` every 8 s whenever the *navigator*
+  was idle, i.e. also during manual flight. A blocking command pauses the rc stream until the reply or the 3 s
+  timeout, so on a marginal link the sticks are dead 3 s out of every 8. Now no query is sent while the drone is
+  airborne in any mode (the rc stream keeps the SDK alive in flight).
+* Instrumentation added so the next outdoor flight is diagnosable: state JSON has `wifi` (drone link dBm from
+  /proc/net/wireless, wlan0), `rcAge` (s since the page last sent sticks) and `stale` (dead-man released the
+  sticks); the page header shows "link -49 dBm / input 0.1s" and turns red with "STICKS RELEASED" plus a message
+  when the operator link drops; the log gets `manual sticks released: no input from the page for X s`.
+* Range: the drone is the access point. The Pi's on-board antenna is the weak end; through walls tens of metres at
+  best, open air 50-100 m. Keep the Pi (and the laptop it is wired to) near a window or take them outside on a
+  power bank; the operator's phone link to the Funnel matters too (0.5 s without sticks = hover).
+* Next outdoor flight: watch the header. Red "STICKS RELEASED" = your phone/laptop link; dBm falling below about
+  -75 with video artefacts = drone link; neither, and the drone just drifts = wind (raise the slider to 80-100).
+
 ### 2026-09-12 22:18 (pi) stuck `flying` flag: the drone landed by itself, TAKE OFF ignored, LAND answered `error`
 Run 22:13:15 (battery 100 %, b93d21c, debug):
 * +16.58 `takeoff` -> `ok` (+23.83). No `land` was sent after that. By +68 s the drone was on the ground (status
@@ -105,30 +127,6 @@ directions fail differently:
   called off before it ran (the drone was never power-cycled for it). From now on only the wlan0 byte counter is
   used (per-second rx logger, no packet capture). drone-watch is running again with `--log-level debug`, build
   b93d21c (21:56:10). Next: front -> belly, belly image + 10 s, belly -> front.
-=======
-### 2026-09-12 22:40 (laptop) outdoor flying: range, dead sticks, speed slider
-* User report: camera switching now works both ways (belly -> front is slow: that is the measured 4.5-6 s settle).
-  Outdoors the drone stops answering the sticks but still lands and still streams video; the speed slider "does
-  nothing".
-* Slider: verified in the real page with headless Chrome: slider 100 + W = [0,100,0,0], slider 25 + pad = [25,13,0,0].
-  It works; the Tello's rc response is strongly non-linear (below ~30 it barely moves) and wind dominates outdoors.
-* Log of the outdoor runs (22:13-22:18): no page reconnects, `battery?` replies prompt during the 22:18 flight but
-  three 3 s timeouts right after landing: the drone link was marginal outdoors while video (fire-and-forget from the
-  drone) kept arriving. `land` is a retried command, so it still got through.
-* Design flaw fixed: the ground-station keep-alive sent a blocking `battery?` every 8 s whenever the *navigator*
-  was idle, i.e. also during manual flight. A blocking command pauses the rc stream until the reply or the 3 s
-  timeout, so on a marginal link the sticks are dead 3 s out of every 8. Now no query is sent while the drone is
-  airborne in any mode (the rc stream keeps the SDK alive in flight).
-* Instrumentation added so the next outdoor flight is diagnosable: state JSON has `wifi` (drone link dBm from
-  /proc/net/wireless, wlan0), `rcAge` (s since the page last sent sticks) and `stale` (dead-man released the
-  sticks); the page header shows "link -49 dBm / input 0.1s" and turns red with "STICKS RELEASED" plus a message
-  when the operator link drops; the log gets `manual sticks released: no input from the page for X s`.
-* Range: the drone is the access point. The Pi's on-board antenna is the weak end; through walls tens of metres at
-  best, open air 50-100 m. Keep the Pi (and the laptop it is wired to) near a window or take them outside on a
-  power bank; the operator's phone link to the Funnel matters too (0.5 s without sticks = hover).
-* Next outdoor flight: watch the header. Red "STICKS RELEASED" = your phone/laptop link; dBm falling below about
-  -75 with video artefacts = drone link; neither, and the drone just drifts = wind (raise the slider to 80-100).
->>>>>>> ccd3319 (Manual flight: no blocking query while airborne, link and stick-input indicators)
 
 ### 2026-09-12 21:58 (laptop) measured: the drone honours streamon only ~3 s after the camera change
 * Run 21:46:52 (battery 39 %), belly switch: settle 1.0 s -> `streamon` ok, no frames; 2.0 s -> ok, no frames;
