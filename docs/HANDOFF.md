@@ -26,6 +26,55 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 19:40 (pi) race day on power-on: drone-watch service, replay of real frames 28 fps, boot check script
+**Race-day procedure (user):**
+1. The Pi is powered and wired to the laptop (the laptop's internet sharing must be on). Nothing needs to be started on
+   the Pi.
+2. Power the drone on and wait about **45 s**. That is an estimate not yet measured with the drone: about 15 s for
+   the drone to raise its Wi-Fi, up to 5 s until the next scan, about 10 s to join and get an answer from
+   192.168.10.1, and a few seconds for tello_race to start.
+3. Open **https://quiquepi.tail2b1864.ts.net/?token=OPERATOR** from any browser on any network. The operator token
+   is `[web] token` in `config/default.ini` (never share it). Spectators use `?token=watch`. The header must read
+   "connected". If the page shows 502, the ground station isn't up yet: wait and reload.
+4. Fly (TAKE OFF / START need two clicks). After the run, power the drone off (it overheats sitting on the ground).
+   About 20 s after the drone goes silent, the Pi stops tello_race and waits for the next power-on, so a battery
+   swap is the same procedure.
+* Watching it: `journalctl -t drone-watch -f` (every step is logged), `tmux attach -t claude` then window `drone`.
+  Manual override: `systemctl --user stop drone-watch`, then `scripts/pi/drone_wifi.sh up` and
+  `scripts/pi/ground_station.sh` as before.
+
+**Implementation:**
+* `scripts/pi/drone_watch.sh`, run by the user unit `drone-watch.service` (installed at
+  `~/.config/systemd/user/`, enabled; linger is on for quiquepi, so it runs at boot without a login). Every 5 s, while
+  `tello` isn't active: `nmcli dev wifi list --rescan yes ifname wlan0` (cached list if the rescan is refused). When
+  TELLO-FE18DB is visible it checks `ipv4.never-default yes` (and sets it if missing), then runs
+  `sudo -n nmcli --wait 30 con up tello` and waits up to 20 s for `ping 192.168.10.1`. Only when the drone answers
+  does it stop any tello_race listening on 8080 (SIGINT, then SIGTERM; a non-tello_race holder is logged and left
+  alone) and run `scripts/pi/ground_station.sh start` (tello_race fly in tmux `claude:drone`, Funnel ensured).
+  - tello_race exits while the drone still answers: logged, restarted after 10 s.
+  - drone unreachable for 20 s: ground station stopped, `nmcli con down tello` (wlan0 goes back to the home Wi-Fi),
+    back to waiting.
+  - tello profile no longer active: ground station stopped, back to waiting.
+  `KillMode=process`, so restarting the watcher never kills tmux or tello_race. Not tested with the drone yet (the
+  drone is off): verified that the service runs, logs `started: waiting for TELLO-FE18DB`, and detects the simulator
+  on 8080 correctly.
+* `scripts/pi/boot_check.sh`: checks eth0 = 192.168.137.10/24, default route on eth0, Tailscale Running and online,
+  Funnel -> 127.0.0.1:8080, public `/api/status` HTTP code, drone-watch active/enabled, never-default. Before the
+  reboot everything was OK (public HTTP 200 with the sim).
+
+**Replay of the real camera path** (`fly --source file:... --headless --dry-run --set web.enabled=1`; `--dry-run`
+added as a safety net, it doesn't touch perception, which runs on every frame even in IDLE):
+* `/home/quiquepi/live_camera_60s.mp4` is really **6 fps** (ffprobe: 303 frames, 50.5 s, `r_frame_rate 6/1`), and
+  file playback is paced at the file's rate, so the page showed `fps 5.9` (the source limit), with tello_race at 36 %
+  of one core.
+* To measure capacity: re-encoded to 30 fps with ffmpeg (duplicated frames, same pixels, 1515 frames) -> `fps` 28.1 /
+  28.0 / 28.2 at 10/20/30 s, **tello_race 120–150 % CPU** (of 400 %), RES ~165 MB. So perception on real 960x720
+  frames runs at >= 28 fps on the Pi, well above the 10 fps preflight limit; no lower camera resolution is needed.
+* Output: no errors. The only warning is `DRY RUN: flight commands are logged, not sent`; `[null-drone] command:
+  battery?` keep-alives every 8 s. Simulator restarted afterwards in `claude:sim` (page live).
+* For the laptop: a live Tello stream should be ~30 fps; the 6 fps file is presumably the recorder's timestamps or a
+  frame skip on the laptop side, worth checking.
+
 ### 2026-09-12 19:30 (pi) VNC cycle test: both switches work, wayvnc crashes afterwards with DSI-2 captured; Funnel on
 * Sequence (output state polled every 0.5 s + journal):
   - 19:24:10.03 client disconnected (count 0) -> 19:24:10 DSI-2 on -> 19:24:11 capture DSI-2 -> 19:24:12 HDMI-A-1

@@ -1,0 +1,15 @@
+[Unit]
+Description=Race day: join TELLO-FE18DB when the drone is powered on and start the ground station
+# User units can not order after the system's network-online.target; the script waits for NetworkManager itself.
+# Linger is enabled for quiquepi, so this runs at boot without a desktop login.
+
+[Service]
+ExecStart=%h/tello-race/scripts/pi/drone_watch.sh
+Restart=always
+RestartSec=5
+# tello_race and tmux started by the script must survive a restart of the watcher (the tmux server may be the
+# one the claude session lives in): only the script itself is stopped.
+KillMode=process
+
+[Install]
+WantedBy=default.target
