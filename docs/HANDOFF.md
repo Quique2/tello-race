@@ -26,6 +26,21 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 18:50 (pi) eth0 pinned to 192.168.137.10, Tailscale re-established
+* User gave the go for step 0b. The change had already been applied at 18:40:38 by the laptop session over Tailscale
+  SSH (`nmcli con modify netplan-eth0 ipv4.method manual ipv4.addresses 192.168.137.10/24 ipv4.gateway 192.168.137.1
+  ipv4.dns 192.168.137.1 connection.autoconnect yes` + `con up`); the profile is `netplan-eth0` (NetworkManager with
+  netplan backend, written to `/etc/netplan/90-NM-*.yaml`). Home Wi-Fi `netplan-wlan0-INFINITUM2C06` stays DHCP.
+* Verified on the Pi: `ip -br addr` eth0 = 192.168.137.10/24; `ip route` = `default via 192.168.137.1 dev eth0 proto
+  static metric 100` (wlan0 default metric 600 as backup); `ping 1.1.1.1` ok (~23 ms); `curl -sI https://github.com`
+  -> HTTP/2 200; sshd and wayvnc listen on all addresses (22, 5900). `ping 192.168.137.1` gets no reply: Windows
+  Firewall blocks ICMP on the ICS adapter, traffic through it works.
+* Side effect: after the address change tailscaled kept timing out its control long-poll (`map response long-poll
+  timed out`, node shown offline) although peer traffic worked. `sudo systemctl restart tailscaled` at 18:48 fixed
+  it: `BackendState=Running`, online, `quiquepi.tail2b1864.ts.net` 100.112.7.35, `tailscale ping bulmacompu` direct
+  via 192.168.1.75. If eth0 changes address again, restart tailscaled.
+* Pending: user check that TigerVNC works at 192.168.137.10:5900; reboot for the HDMI/vnc-screens test (18:45 entry).
+
 ### 2026-09-12 18:45 (pi) wayvnc crash: root cause is a stuck HDMI-A-1 in labwc, script rewritten, reboot pending
 * Read the 18:30 laptop entry. Timeline from the journal plus `~/.xsession-errors` (labwc log, its timestamps are
   time since labwc start, 15:10:14):
