@@ -122,6 +122,25 @@ only need the link.
 6. **Speeds**: fly the practice track with the defaults, then raise `follow.v_max` until runs start to fail,
    and back off one step. Record everything (`--record`) and replay to inspect.
 
+## Race day with the Raspberry Pi ground station
+
+Everything runs on the Pi from power-on. The laptop only shares its internet over the Ethernet cable
+(Windows Internet Connection Sharing, laptop = 192.168.137.1, Pi = 192.168.137.10) and must stay awake.
+
+1. Pi powered and wired to the laptop; laptop on Wi-Fi with the sharing on. Nothing is started by hand.
+2. Power the drone on and wait about 45 s. The `drone-watch` service on the Pi sees `TELLO-FE18DB`, joins it
+   (the Pi keeps its internet through the cable) and starts `tello_race fly` with the web page.
+3. Open `https://quiquepi.tail2b1864.ts.net/?token=<operator token>` from any browser on any network; spectators
+   use `?token=watch`. The header must read "connected". A 502 means the ground station is still starting: reload.
+4. MANUAL for a hand-flown check (TAKE OFF needs two clicks), MISSION plus START for the autonomous run. Power the
+   drone off after each run; about 20 s later the Pi stops the ground station and waits for the next power-on, so
+   a battery swap is the same procedure.
+
+Watching the Pi: `ssh quiquepi@100.112.7.35`, then `journalctl -t drone-watch -f`, or `tmux attach -t claude`
+and its `drone` window. Manual override: `systemctl --user stop drone-watch`, then `scripts/pi/drone_wifi.sh up`
+and `scripts/pi/ground_station.sh start`. After a reboot `scripts/pi/boot_check.sh` verifies address, route,
+Tailscale, Funnel and services. Perception on real 960x720 frames runs at about 28 fps on the Pi 5.
+
 ## Competition day
 
 * Battery > 60 % on every attempt; the software refuses to take off under 25 %.
