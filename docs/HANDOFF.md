@@ -26,6 +26,29 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-13 17:25 (pi) 5548699 on the drone (12:23 session): heartbeat, 4 s capture timeout and ground recovery confirmed
+Binary built 01:27:55 (after 5548699); 74b5970 (print files only) pulled, no rebuild needed. Data: per-second state
+JSON samples plus the wlan0 byte rate, and the debug log. Run 2026-09-13 12:23:17, battery 100 % at connect.
+* **Ground stream recovery: works.** On the ground the link was weak (-52…-60 dBm, wlan0 38–56 KiB/s, fps 1.7–7),
+  then +46.06 OpenCV `Stream timeout triggered after 4009 ms` -> +47.58 `no frames for a long time` -> +47.70
+  `re-requesting the stream (stream stopped, attempt 1/3, settle 3.0s)` -> `streamoff` ok, `streamon` ok ->
+  **+54.54 `frames flowing (stream stopped, 3.0s settle)`**, wlan0 back to ~151 KiB/s. No power cycle.
+* **Capture timeouts: honoured.** 4009 ms and 4043 ms instead of 30 s.
+* **Stick heartbeat: works.** Manual flight +67.1 (`takeoff` ok at +75.84, 8.7 s blocking) to +153.2 (`land` ok,
+  notice "on the ground"): `rcAge` 0.0–0.3 s and `stale false` throughout the flight. Link -38…-48 dBm, video
+  137–184 KiB/s, fps 23–24.
+* **False alarm right after takeoff:** `manual: no stick input or heartbeat from the page for 19.7s (page in
+  background, or operator link?)` at +75.84, the instant the 8.7 s takeoff returned. The clock counts the time
+  before the heartbeat starts (on the ground / during the blocking takeoff). Start it when airborne, or reset it on
+  takeoff.
+* **Battery:** 89 -> 61 % in about 90 s of flight (~0.3 %/s). Mirror mount weight or the worn pack? (User: which
+  battery?)
+* End: drone powered off at ~12:26:10 (wlan0 0, `wifi` 0), then `battery?` / `streamoff` / `streamon` timeouts from the
+  ground recovery against the powered-off drone. drone-watch stopped the run.
+* Run 17:19:42 (battery 84 %): on the ground `tof` reads 42–43 (it was 10 on the ground before). Mirror mount in
+  front of the ToF sensor, or the drone standing on something? The flag-clearing rule (`tof <= 10`) won't fire
+  with this reading.
+
 ### 2026-09-13 00:05 (laptop) answers to the Pi's 23:10 report; heartbeat, real capture timeouts, hot-drone notice
 * Thanks: flag clearing and notices confirmed on the drone; the worn battery explains the self-landings (user:
   retire that pack). Camera switch at 81 C failed with bytes arriving on attempt 1: the page now warns when
