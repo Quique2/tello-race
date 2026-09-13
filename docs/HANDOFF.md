@@ -26,6 +26,47 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 23:10 (pi) 21a4e08 on the drone: flag clearing and notices work; a worn battery; stick gaps not logged; belly switch failed 3/3
+Data: per-second samples of the state JSON (`wifi`, `rcAge`, `stale`, `h`, `tof`, `bat`, notices) plus the wlan0 byte
+rate, and the tello_race log (debug). Byte counters only. The user flew in MANUAL, indoors/nearby (link never
+weaker than -57 dBm), so this isn't the far outdoor case yet.
+* **Header dBm:** the JSON carries `wifi` (-31…-57 dBm while joined, 0 once the drone is off). `/proc/net/wireless`
+  lists **only wlan0**, which is the drone link while joined, so the value is right. The page header itself is for
+  the user to confirm.
+* **Flag clearing from telemetry: works.** Runs 22:57:17 (+65.49) and 22:59:13 (+39.99):
+  `Tello: telemetry says on the ground for 1.5 s -> clearing the flying flag (it landed by itself)` ->
+  `notice: drone is on the ground: TAKE OFF is available again` (noticeId 1). Normal land in run 23:01:00 (+297.4
+  `land` ok) also produced that notice.
+* **Notices for refused take-off: work.** Takeoffs right after those self-landings were sent and answered `error`
+  (+69.15, +71.02 and +47.88, +49.22) -> `manual takeoff refused: error` -> `notice: take-off refused by the drone:
+  error` (noticeId 2, 3). The mission-mode TAKE OFF notice wasn't pressed (the user was in MANUAL each time).
+* **Worn battery (not software).** The battery used in runs 22:57 and 22:59 showed 53 -> 32 % in 60 s, then 44 %
+  after a rest, then 44 -> 21 % in 55 s, still ~1 %/s on the ground, 15 % at power-off. The drone **landed by
+  itself** at ~40 % and ~30 % (h 60 -> 0 in 2–4 s, no `land` sent) and then answered `error` to `takeoff`. Low-voltage
+  protection. With a fresh battery (run 23:01:00, 100 %) the user flew 4.5 min, 100 -> 57 %, no self-landing, no
+  refused take-off. **User: keep that battery out of use.**
+* **Stick gaps from the page while airborne: many, and no log warning.** `stale true` samples: 279 in run
+  23:01:00. Longest gaps while flying: `rcAge` 20.7 s (23:03:45–04:00, h 70), 11.5 s (23:04:15–26), 3.7–3.9 s
+  (23:01:48, 23:02:23), 16–20 s in run 22:59 (22:59:39–43) and 21 s in run 22:57 (22:58:13–22). The drone link was
+  fine during all of them (-35…-52 dBm, video ~150 KiB/s). So these are **operator-link / page-side gaps**, which
+  matches "the drone stops answering the sticks". **`manual sticks released` never appeared in the log**
+  (0 lines over all three runs), although `stale` was true for up to 20 s: the log warning doesn't fire.
+* **battery? timeouts:** only when the drone was being powered off (+92.6/+100.6 in run 22:57, +75.3/+83.3 in run
+  22:59; wlan0 0 KiB/s, `wifi 0`). None while the drone was up. The in-flight query fix can't be judged from these
+  flights because there were no marginal-link moments.
+* **Min wifi:** -56 dBm (run 22:57), -46 (22:59), -57 (23:01).
+* **Belly switch after the flight (run 23:01:00, on the ground, drone at 81 °C): failed all 3 attempts.**
+  +341.72 `camera` -> attempt 1 (3.0 s) `streamon` ok +344.86 -> wlan0 **~100 KiB/s for 5 s (video arrived)** ->
+  `no frame within 4 s`. Attempt 2 (4.5 s) `streamon` ok +354.14 -> **wlan0 1–2 KiB/s (silent)** -> open blocked
+  30.05 s + 30.03 s -> `re-open failed` +414.22. Attempt 3 (6.0 s) `streamon` ok +420.79 -> silent -> 30.03 s +
+  30.03 s -> +481.35 `ERR the drone did not resume the stream after 3 attempts (belly camera)`. The loop was
+  blocked ~2 min in total. The open timeout is still OpenCV's 30 s (see 22:10 entry, item 2). Temperature may
+  matter: the successful switches were at 46–72 °C, this one at 81 °C.
+* For the laptop: (1) the `manual sticks released` log line doesn't fire; (2) look at why the page stops sending
+  sticks for 10–20 s while connected (tab throttling in background? the laptop/phone's own link?), possibly log
+  WebSocket disconnects/reconnects with timestamps; (3) open timeout (`CAP_PROP_OPEN_TIMEOUT_MSEC`) is still the
+  biggest risk during a camera switch.
+
 ### 2026-09-12 23:05 (laptop) stuck `flying` flag fixed, page notices for ignored actions
 * Implements the Pi's 22:18 analysis. `TelloDrone`: the flag is cleared when telemetry has said on-the-ground
   (`h <= 0 && tof <= 10`) for 1.5 s while the flag was set, and when `land` is answered `error` while telemetry says
