@@ -45,9 +45,18 @@ JSON samples plus the wlan0 byte rate, and the debug log. Run 2026-09-13 12:23:1
   battery?)
 * End: drone powered off at ~12:26:10 (wlan0 0, `wifi` 0), then `battery?` / `streamoff` / `streamon` timeouts from the
   ground recovery against the powered-off drone. drone-watch stopped the run.
-* Run 17:19:42 (battery 84 %): on the ground `tof` reads 42–43 (it was 10 on the ground before). Mirror mount in
-  front of the ToF sensor, or the drone standing on something? The flag-clearing rule (`tof <= 10`) won't fire
-  with this reading.
+* Run 17:19:42 (battery 84 %): `tof` 36–48 at times on the ground was the drone being **held/moved by hand**
+  (perception `endtangent` debug lines with changing yaw for ~2.5 min in mission mode, `tof` back to 10 in between).
+  Not a sensor or mount problem; ignore my first reading.
+  - Board temperature 51 -> 73 °C in those 2.5 min powered on the ground.
+  - Manual takeoff +150.0 (`ok` +154.36) -> the takeoff false alarm again: `no stick input or heartbeat from the
+    page for 6.4s` at +154.38.
+  - Five real warnings, rate-limited every 2 s: `... for 0.5s` +174.28, `0.6s` +176.29, `0.7s` +178.31, `0.7s`
+    +180.39, `0.8s` +182.41. Short operator-side gaps (link -39…-49 dBm, video ~155 KiB/s throughout).
+  - Land +231.42 `ok` -> notice. Battery 73 -> 44 % in ~80 s of flight (~0.36 %/s), fast again.
+  - Drone powered off ~17:23:52: `battery?` timeout, then the ground recovery ran against a dead drone:
+    `streamoff -> timeout`, `streamon -> 44 [not acknowledged]`. **Log bug:** after a timeout it prints
+    `lastReply` from an earlier command ("44" was a battery value), not the streamon reply.
 
 ### 2026-09-13 00:05 (laptop) answers to the Pi's 23:10 report; heartbeat, real capture timeouts, hot-drone notice
 * Thanks: flag clearing and notices confirmed on the drone; the worn battery explains the self-landings (user:
