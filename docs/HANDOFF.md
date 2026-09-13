@@ -26,6 +26,27 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 19:30 (pi) VNC cycle test: both switches work, wayvnc crashes afterwards with DSI-2 captured; Funnel on
+* Sequence (output state polled every 0.5 s + journal):
+  - 19:24:10.03 client disconnected (count 0) -> 19:24:10 DSI-2 on -> 19:24:11 capture DSI-2 -> 19:24:12 HDMI-A-1
+    off -> 19:24:13.44 `local: enabled DSI-2, wayvnc captures DSI-2`. wayvnc (PID 1684) **survived all three steps**.
+  - 19:24:14.64 wayvnc 1684 segfault (status=139), 2 s after the last change, with 0 clients and no output change
+    in progress. Then more segfaults of each restarted wayvnc: 19:24:15.17, 19:24:31.00, 19:24:40.48, 19:24:51.05,
+    19:24:59.47 (NRestarts=7). None has a pam/auth line, so the crashes come before authentication. vnc-screens
+    followed each restart (`wayvnc shut down` -> go_local; DSI-2 was already on, so there was no output commit).
+  - 19:25:45.13 client authenticated -> `client connected (count 1)` -> 19:25:46 HDMI-A-1 on -> capture HDMI ->
+    19:25:47 DSI-2 off -> 19:25:48.37 `remote`. wayvnc (PID 14385) **survived** and is still running.
+* So the on/off switching doesn't crash wayvnc anymore; the crashes happen while DSI-2 is captured and no client is
+  connected. Two candidate triggers, not yet separated: (a) TigerVNC reconnect attempts hitting a wayvnc that captures
+  DSI-2 (the `ext-image-copy-capture: No supported buffer formats` error shows up on every connect), or (b) my test
+  poller, which called `wayvncctl output-list` and `client-list` every 0.5 s. The crashes stopped when I killed that
+  poller (~19:25:05–10), but also 45 s before the successful connect. It was replaced by a poller without wayvncctl
+  (outputs, wayvnc PID, established TCP connections on 5900). `VNC_SCREENS_TOGGLE` stays 1 so the next test changes
+  only one variable. If crashes still follow the disconnect, the next step is `VNC_SCREENS_TOGGLE=0` plus keeping the
+  capture on HDMI-A-1.
+* Funnel: approved; `tailscale funnel status` = `https://quiquepi.tail2b1864.ts.net` -> proxy `http://127.0.0.1:8080`,
+  and `/api/status?token=watch` answers through that URL (sim running in `claude:sim`).
+
 ### 2026-09-12 19:25 (pi) boot layout restored, vnc-screens enabled, Funnel pending approval, simulator on the web
 * This is a new Claude Code session on the Pi (tmux `claude:0`), continuing the paused VS Code Pi session.
 * Why HDMI was on and DSI off after the reboot: at 18:54:21 someone saved an HDMI-only layout in the Control Centre's
