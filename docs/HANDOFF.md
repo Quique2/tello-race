@@ -26,6 +26,18 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 19:50 (laptop) first real power-on: automatic join and ground station verified end to end
+* Drone powered on by the user at ~19:46:30. drone-watch journal: 19:46:51.7 `TELLO-FE18DB visible, joining`,
+  19:46:52.3 joined (wlan0 192.168.10.2, default route stayed on eth0), 19:46:52.3 drone answers, 19:46:52.4
+  ground station started, 19:46:56.5 `tello_race fly` running, port 8080 listening at 19:46:58. So about 7 s from
+  SSID visible to page up; the "45 s" in the README is a safe upper bound.
+* Live status on the Pi: `drone tello`, telemetry true, battery 77 %, video **24.0 fps** on the Pi, temp 44-46 C at
+  power-on. From the laptop over the public Funnel URL (viewer token): page 12 KB in 0.05 s, status JSON, WebSocket
+  hello role viewer with 25 state messages in 3 s, MJPEG frames flowing (real camera image confirmed).
+* Idle drone on the ground: battery 77 -> 70 % and board temp 44 -> 76 C within 4 min. Power it off between tests.
+* Nothing left on the laptop side for the manual flight. Before an autonomous run on the real track: README
+  calibration checklist (calib-color, tag size, calib-ground, sign conventions), which needs the track.
+
 ### 2026-09-12 19:45 (pi) dry test of the start path without the drone: two bugs in ground_station.sh fixed
 * After the reboot the laptop ran `boot_check.sh` and everything passed. Then `scripts/pi/ground_station.sh start`
   was run with drone-watch left running.
