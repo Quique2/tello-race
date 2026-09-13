@@ -26,6 +26,26 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 18:30 (laptop) VNC crash found: wayvnc segfaults when vnc-screens switches outputs
+* Journal on the Pi (`journalctl --since "10 min ago" | grep -iE "wayvnc|vnc-screens"`): on every VNC client connect
+  (18:25:37, 18:25:57) `wayvnc[...]: Segmentation fault`, `wayvnc.service ... status=139`, at the same instant
+  `vnc-screens.sh: failed to apply configuration` / `could not enable DSI-2`, then systemd restarts wayvnc and the
+  script goes back to local. The user sees TigerVNC "readTLS: The TLS connection was non-properly terminated (-110)".
+  Cause: the client-connected handler changes the outputs (kanshi SIGHUP applies enable HDMI + disable DSI atomically,
+  plus `output-set`) while wayvnc (0.9.1, `--gpu --detached`) is capturing the output that gets disabled -> crash.
+* Laptop action (reversible): `systemctl --user stop vnc-screens` so VNC works again on DSI-2 only. The service is
+  still enabled; restart it once fixed.
+* Suggested fix for the Pi session: never disable the output wayvnc is capturing in the same step as the switch. Do it
+  sequentially with wlr-randr, no kanshi SIGHUP in the hot path (write the kanshi config for boot only):
+  connect -> `wlr-randr --output HDMI-A-1 --on --mode 1920x1080`; sleep 1; `wayvncctl output-set HDMI-A-1`; sleep 1;
+  `wlr-randr --output DSI-2 --off`. Disconnect (count 0) -> `wlr-randr --output DSI-2 --on`; sleep 1;
+  `wayvncctl output-set DSI-2`; sleep 1; `wlr-randr --output HDMI-A-1 --off`. If wayvnc still segfaults, test with
+  both outputs kept enabled (only `output-set`), and try wayvnc without `--gpu` (systemd drop-in overriding ExecStart
+  of wayvnc.service / wayvnc-run.sh). Verify with the journal open in another tmux window while the user connects.
+* Tailscale is up on both sides: laptop `bulmacompu` 100.111.200.37, Pi `quiquepi` 100.112.7.35; Tailscale SSH from
+  the laptop works (`ssh quiquepi@100.112.7.35`, no key needed). HDMI-A-1 is a MacroSilicon HDMI device (capture
+  dongle), reported `connected`, so no cmdline `video=` forcing is needed while it stays plugged in.
+
 ### 2026-09-12 (pi) setup, Linux build, scripts
 * Pi: Raspberry Pi 5 Model B Rev 1.1, 4 cores, 16 GB RAM, 57 GB SD (46 GB free). Debian GNU/Linux 13 (trixie),
   kernel 6.18.34+rpt-rpi-2712 aarch64, labwc desktop (rpd-labwc), wayvnc 0.9.1, kanshi 1.5.1. No extra Wi-Fi adapter.
