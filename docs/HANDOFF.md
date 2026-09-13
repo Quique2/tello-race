@@ -26,6 +26,23 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-13 17:50 (pi) the drone refuses every takeoff (23/23 `error`) with a full battery; board up to 90 °C on the ground
+* Run 17:26:23 (battery 68 %): normal. Takeoff +31.1 ok (takeoff false alarm `... for 20.1s` again), +67.6 `flip f` ->
+  `notice: flip refused: the Tello needs more than about 50 % battery` (page-side check, nothing sent), land +115.6
+  ok. 68 -> 32 % in ~1.5 min of flight.
+* Run 17:41:11 (battery **100 %**): **5/5** `takeoff` answered `error` (+16.58 … +38.20) within 7–50 ms, on the
+  ground (`h 0`, `tof 10`), link -43…-51 dBm, video normal, board 52–57 °C.
+* Run 17:42:35 (battery 92 %) after a power cycle: **18/18** `takeoff` answered `error` (+8.5 … +175.9). Board
+  66 °C at +20 s, 71 °C at +50 s, **85 °C at +180 s, max 90 °C**, all on the ground. Powered off ~17:46:30.
+* Not battery level, not link, not software (the takeoff reaches the drone and is answered immediately). The SDK
+  gives no reason. Candidates, not yet separated: the new mirror mount (touching a propeller, covering the
+  downward vision/ToF sensors, or unbalancing it), an IMU needing calibration / not level, or heat (the first 5
+  refusals were at only 52–57 °C, so heat alone doesn't explain those). Asked the user to cool it, remove the mount,
+  try once on a flat surface, then use the official app for the reason / IMU calibration.
+* For the laptop: when `takeoff` is answered `error`, the notice could add the likely checks (level surface,
+  propellers/mount, temperature `temph`, "open the Tello app for the reason"). The operator pressed TAKE OFF 23
+  times because the notice gives no hint what to do.
+
 ### 2026-09-13 17:25 (pi) 5548699 on the drone (12:23 session): heartbeat, 4 s capture timeout and ground recovery confirmed
 Binary built 01:27:55 (after 5548699); 74b5970 (print files only) pulled, no rebuild needed. Data: per-second state
 JSON samples plus the wlan0 byte rate, and the debug log. Run 2026-09-13 12:23:17, battery 100 % at connect.
