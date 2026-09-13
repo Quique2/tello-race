@@ -5,7 +5,7 @@ const $=id=>document.getElementById(id);
 let tok=localStorage.getItem('tello_token')||'';const qtok=new URLSearchParams(location.search).get('token');if(qtok){tok=qtok;localStorage.setItem('tello_token',tok);history.replaceState(null,'',location.pathname);}$('tok').value=tok;
 $('bTok').onclick=()=>{tok=$('tok').value.trim();localStorage.setItem('tello_token',tok);location.reload();};
 const q=tok?('?token='+encodeURIComponent(tok)):'';
-let ws=null,role='viewer',cam='',mode='mission',flying=false,wasStale=false;
+let ws=null,role='viewer',cam='',mode='mission',flying=false,wasStale=false,lastNoticeId=-1;
 function video(){const img=$('v');img.src='/stream.mjpg'+(q?q+'&':'?')+'r='+Date.now();img.onerror=()=>setTimeout(video,3000);}
 let msgT=null;function msg(t,sticky){const e=$('msg');e.textContent=t;e.hidden=!t;clearTimeout(msgT);if(t&&!sticky)msgT=setTimeout(()=>{e.hidden=true;},5000);}
 function send(cmd,arg){if(!ws||ws.readyState!==1){msg('not connected: enter the operator token under ACCESS and press apply');return false;}
@@ -55,6 +55,7 @@ function connect(){const proto=location.protocol==='https:'?'wss://':'ws://';ws=
   $('drone').textContent=m.drone;const b=$('bat');b.textContent=m.telemetry?(m.bat+' %'):'no telemetry';b.classList.toggle('low',m.telemetry&&m.bat<30);
   $('h').textContent=m.telemetry?(m.tof+' cm'):'-';$('temp').textContent=m.telemetry?(m.templ+'-'+m.temph+' C'):'-';
   $('fps').textContent=m.fps.toFixed(1)+' fps';$('tag').textContent=m.tag>0?('ID'+m.tag+' @ '+m.tagX.toFixed(2)+' m'):'-';
+  if(m.noticeId!==undefined){if(lastNoticeId<0)lastNoticeId=m.noticeId||0;else if(m.noticeId!==lastNoticeId){lastNoticeId=m.noticeId;if(m.notice)msg(m.notice);}}
   const mf=(m.mode==='manual'&&m.flying),st=!!(m.stale&&mf);const L=$('link');
   L.textContent=(m.wifi?m.wifi+' dBm':'-')+(mf?(st?' / STICKS RELEASED':' / input '+(m.rcAge>=0?m.rcAge.toFixed(1)+'s':'none')):'');L.classList.toggle('low',st);
   if(st&&!wasStale)msg('sticks released: no input reached the ground station for '+(m.rcAge>=0?m.rcAge.toFixed(1):'?')+' s. Weak connection between this device and the Pi?');wasStale=st;

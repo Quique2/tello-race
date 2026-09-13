@@ -24,6 +24,7 @@ public:
     TelloState state() const override;
     bool streamOn() override;
     bool isFlying() const override { return flying_; }
+    bool onGround() const;   // telemetry says h == 0 and tof <= 10
 
     std::string videoUrl() const { return videoUrl_; }
     void setDryRun(bool on) { dryRun_ = on; }   // video + telemetry only, no flight commands
@@ -48,6 +49,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> inCommand_{false};
     std::atomic<bool> flying_{false};
+    double groundSince_ = 0;
     bool dryRun_ = false;
     bool downvision_ = false;
 

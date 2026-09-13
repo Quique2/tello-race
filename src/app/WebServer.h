@@ -88,6 +88,8 @@ struct StateSnapshot {
     double rcAge = -1;     // s since the page last sent sticks (manual mode), -1 otherwise
     bool stale = false;    // dead-man has released the sticks
     int wifi = 0;          // drone link signal, dBm (0 = unknown)
+    std::string notice;    // one-line message for the page, shown once per noticeId
+    int noticeId = 0;
     std::vector<std::string> events;
 };
 std::string stateToJson(const StateSnapshot& s);

@@ -26,6 +26,22 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 23:05 (laptop) stuck `flying` flag fixed, page notices for ignored actions
+* Implements the Pi's 22:18 analysis. `TelloDrone`: the flag is cleared when telemetry has said on-the-ground
+  (`h <= 0 && tof <= 10`) for 1.5 s while the flag was set, and when `land` is answered `error` while telemetry says
+  grounded (the Tello refuses `land` when it is already down). Both cases are logged. Until now only a power cycle
+  cleared it, so after a self-landing (15 s without commands on a lost link, low battery, a bump) TAKE OFF was
+  silently never sent, CAMERA was refused and LAND answered `error`.
+* New one-line notice channel to the page (`noticeId`/`notice` in the state JSON, shown once per id as the yellow
+  message): take-off ignored because the drone reports flying, take-off in mission mode, take-off/land refused by the
+  drone with its reply, camera switch refused while flying, "drone is on the ground: TAKE OFF is available again".
+  Verified in the simulator.
+* Outdoor picture now consistent: the Pi 5 antenna is the weak transmitter, so far from the Pi the drone's video
+  still arrives while the Pi's 20 Hz rc packets are lost -> the Tello hovers ("does not respond"), a retried `land`
+  eventually gets through, and after 15 s without any command the Tello lands by itself -> the flag stuck. Hardware
+  remedy if outdoor range matters: a USB Wi-Fi adapter with an external antenna on the Pi dedicated to the drone
+  (the `tello` profile then binds to that interface), or simply keep the Pi close to the flying area.
+
 ### 2026-09-12 22:40 (laptop) outdoor flying: range, dead sticks, speed slider
 * User report: camera switching now works both ways (belly -> front is slow: that is the measured 4.5-6 s settle).
   Outdoors the drone stops answering the sticks but still lands and still streams video; the speed slider "does

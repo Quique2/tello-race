@@ -118,6 +118,10 @@ bool TelloDrone::command(const std::string& cmd, std::string* reply, double time
     } else {
         LOG_WARN("Tello: command '%s' answered '%s'", cmd.c_str(), text.c_str());
         if (cmd == "emergency") flying_ = false;
+        if (cmd == "land" && flying_ && onGround()) {   // "error" to land = already on the ground: it landed by itself
+            LOG_WARN("Tello: land refused while the telemetry says on the ground -> clearing the flying flag");
+            flying_ = false;
+        }
     }
     return ok;
 }
@@ -148,6 +152,15 @@ void TelloDrone::stateLoop() {
             st.stamp = clock_.now();
             std::lock_guard<std::mutex> lk(stateMtx_);
             state_ = st;
+            // The drone lands by itself (15 s without commands, low battery, a bump). Keep the flag honest,
+            // otherwise takeoff is never sent again and land answers "error" until a power cycle.
+            if (flying_ && st.valid && st.h <= 0 && st.tof <= 10) {
+                if (groundSince_ == 0) groundSince_ = st.stamp;
+                else if (st.stamp - groundSince_ > 1.5) {
+                    LOG_WARN("Tello: telemetry says on the ground for 1.5 s -> clearing the flying flag (it landed by itself)");
+                    flying_ = false; groundSince_ = 0;
+                }
+            } else groundSince_ = 0;
         }
     }
 }
@@ -199,4 +212,9 @@ double TelloDrone::stateAge() const {
 bool TelloDrone::streamOn() {
     std::string reply;
     return command("streamon", &reply, 5.0);
+}
+
+bool TelloDrone::onGround() const {
+    TelloState s = state();
+    return s.valid && s.h <= 0 && s.tof <= 10;
 }

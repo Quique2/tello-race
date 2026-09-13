@@ -88,6 +88,10 @@ private:
     int manualRc_[4] = {0, 0, 0, 0};
     double manualRcT_ = 0;
     double lastStaleLog_ = 0;
+    std::string notice_;   // last one-line message for the page (shown once per id)
+    int noticeId_ = 0;
+    bool prevFlying_ = false;
+    void notice(const std::string& t) { notice_ = t; ++noticeId_; LOG_INFO("notice: %s", t.c_str()); }
     int wifiDbm_ = 0;      // drone link as seen by the ground station, dBm (0 = unknown)
     double wifiT_ = 0;
 };
@@ -166,6 +170,9 @@ int MissionLoop::run() {
             nav_.step(obs, st);
         }
         if (!sim_ && wall.now() - wifiT_ > 1.0) { wifiT_ = wall.now(); wifiDbm_ = readWifiSignalDbm(); }
+        { bool fl = drone_.isFlying();
+          if (prevFlying_ && !fl) notice("drone is on the ground: TAKE OFF is available again");
+          prevFlying_ = fl; }
         if (recording_ && got) record(frame.image, obs, st);
         if (got && ++fpsN && wall.now() - fpsT > 1.0) { fps = fpsN / (wall.now() - fpsT); fpsN = 0; fpsT = wall.now(); }
 
@@ -225,9 +232,16 @@ void MissionLoop::applyWebCommand(const WebCommand& c) {
             manualRcT_ = wallNow();
         }
     }
-    else if (c.cmd == "takeoff") { if (manual_ && !drone_.isFlying()) { if (!drone_.takeoff()) LOG_WARN("manual takeoff refused: %s", drone_.lastReply.c_str()); } }
+    else if (c.cmd == "takeoff") {
+        if (!manual_) notice("TAKE OFF works in MANUAL mode; in mission mode press START");
+        else if (drone_.isFlying()) notice("take-off ignored: the drone reports it is already flying");
+        else if (!drone_.takeoff()) { LOG_WARN("manual takeoff refused: %s", drone_.lastReply.c_str()); notice("take-off refused by the drone: " + drone_.lastReply); }
+    }
     else if (c.cmd == "start") { if (!manual_) handleKey('t'); else LOG_WARN("START ignored in manual mode: switch to mission mode first"); }
-    else if (c.cmd == "land") { if (manual_) { manualRc_[0] = manualRc_[1] = manualRc_[2] = manualRc_[3] = 0; drone_.land(); } else handleKey('l'); }
+    else if (c.cmd == "land") {
+        if (manual_) { manualRc_[0] = manualRc_[1] = manualRc_[2] = manualRc_[3] = 0; if (!drone_.land()) notice("land refused by the drone: " + drone_.lastReply + (drone_.isFlying() ? "" : " (it is on the ground)")); }
+        else handleKey('l');
+    }
     else if (c.cmd == "emergency") handleKey('e');
     else if (c.cmd == "record") handleKey('r');
     else if (c.cmd == "camera") handleKey('v');
@@ -288,6 +302,7 @@ std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st,
     s.drone = dn.c_str();
     if (!obs.tags.empty()) { s.tagId = obs.tags.front().id; s.tagX = obs.tags.front().X; }
     s.wifi = wifiDbm_;
+    s.notice = notice_; s.noticeId = noticeId_;
     if (manual_) {   // show the operator the sticks actually applied (zeros once the dead-man has fired)
         bool stale = wallNow() - manualRcT_ > 0.5;
         s.rcAge = manualRcT_ > 0 ? wallNow() - manualRcT_ : -1;
@@ -326,7 +341,7 @@ bool MissionLoop::handleKey(int key) {
         case 'v': {   // toggle front / belly camera (SDK 3.0 "downvision"); the stream is reopened
             auto* td = dynamic_cast<TelloDrone*>(&drone_);
             if (!td) { LOG_INFO("camera switch is only available on the real drone"); return true; }
-            if (nav_.flying() || drone_.isFlying()) { LOG_WARN("not switching cameras while flying"); return true; }
+            if (nav_.flying() || drone_.isFlying()) { LOG_WARN("not switching cameras while flying"); notice("camera switch refused while flying: land first"); return true; }
             if (wallNow() - lastCameraSwitchT_ < 3.0) {   // a switch blocks for seconds; clicks queued meanwhile are dropped
                 LOG_WARN("camera switch ignored: the previous one finished %.1fs ago", wallNow() - lastCameraSwitchT_);
                 return true;
