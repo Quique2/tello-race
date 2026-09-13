@@ -45,6 +45,7 @@ bool VideoCaptureSource::start(std::string* err) {
         // Tello H.264 UDP stream through FFmpeg: ask for the lowest-latency demuxer/decoder settings.
         setEnv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0|max_delay;0");
         setEnv("OPENCV_FFMPEG_LOGLEVEL", "-8");
+        setEnv("OPENCV_FFMPEG_READ_TIMEOUT", "4000");   // ms: a silent stream fails in 4 s, not OpenCV's 30 s default
         std::string url = spec_ == "udp" ? "udp://0.0.0.0:11111" : spec_;
         LOG_INFO("Opening video stream %s ...", url.c_str());
         if (!cap_.open(url, cv::CAP_FFMPEG)) {
@@ -113,4 +114,12 @@ bool VideoCaptureSource::latest(Frame& out, uint64_t afterSeq, double timeoutS) 
     if (!ok || latest_.seq <= afterSeq) return false;
     out = latest_;
     return true;
+}
+
+bool VideoCaptureSource::waitFirstFrame(double timeoutS) {
+    if (!live_) return true;
+    std::unique_lock<std::mutex> lk(mtx_);
+    cv_.wait_for(lk, std::chrono::duration<double>(timeoutS),
+                 [&] { return latest_.seq > 0 || !running_ || ended_.load(); });
+    return latest_.seq > 0;
 }

@@ -200,19 +200,31 @@ void MissionLoop::applyWebCommand(const WebCommand& c) {
 }
 
 bool MissionLoop::restartVideo(const char* why) {
+    // Switching back to the 960x720 front camera needs longer than the 320x240 belly one: the drone
+    // re-initialises its encoder and ignores a streamon that arrives too early. Back off on each try,
+    // and never report success until a frame has actually been decoded.
     for (int attempt = 1; attempt <= 3; ++attempt) {
-        LOG_WARN("video: re-requesting the stream (%s, attempt %d/3)", why, attempt);
+        double settle = 0.8 * attempt;
+        LOG_WARN("video: re-requesting the stream (%s, attempt %d/3, settle %.1fs)", why, attempt, settle);
         src_.stop();
         std::string r;
-        drone_.command("streamoff", &r, 3.0);
-        clock_.sleep(0.5);
-        drone_.streamOn();
-        clock_.sleep(0.5);
+        bool offOk = drone_.command("streamoff", &r, 3.0);
+        LOG_INFO("video: streamoff -> %s%s", r.empty() ? "(no reply)" : r.c_str(), offOk ? "" : " [not acknowledged]");
+        clock_.sleep(settle);
+        bool onOk = drone_.streamOn();
+        LOG_INFO("video: streamon -> %s%s", drone_.lastReply.empty() ? "(no reply)" : drone_.lastReply.c_str(),
+                 onOk ? "" : " [not acknowledged]");
+        clock_.sleep(settle);
         std::string e;
-        if (src_.start(&e)) { seq_ = 0; LOG_INFO("video: stream re-opened"); return true; }
-        LOG_ERROR("video: re-open failed: %s", e.c_str());
-        clock_.sleep(1.0);
+        if (!src_.start(&e)) { LOG_ERROR("video: re-open failed: %s", e.c_str()); clock_.sleep(0.5); continue; }
+        if (src_.waitFirstFrame(4.0)) {
+            seq_ = 0;
+            LOG_INFO("video: stream re-opened, frames flowing (%s)", why);
+            return true;
+        }
+        LOG_WARN("video: re-opened but no frame arrived within 4 s");
     }
+    LOG_ERROR("video: the drone did not resume the stream after 3 attempts (%s)", why);
     return false;
 }
 

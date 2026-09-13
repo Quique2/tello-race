@@ -24,6 +24,9 @@ public:
     virtual bool latest(Frame& out, uint64_t afterSeq, double timeoutS) = 0;
     virtual bool isLive() const = 0;
     virtual bool ended() const = 0;
+    // Waits for the first frame after start(). Re-opening a Tello stream can succeed and still
+    // deliver nothing (the camera switch does exactly that), so callers must check.
+    virtual bool waitFirstFrame(double timeoutS) { (void)timeoutS; return true; }
     virtual double fps() const = 0;
 };
 
@@ -38,6 +41,7 @@ public:
     bool latest(Frame& out, uint64_t afterSeq, double timeoutS) override;
     bool isLive() const override { return live_; }
     bool ended() const override { return ended_; }
+    bool waitFirstFrame(double timeoutS) override;
     double fps() const override { return fps_; }
 
 private:

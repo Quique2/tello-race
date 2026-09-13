@@ -26,6 +26,33 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+## Entries
+
+### 2026-09-12 20:30 (laptop) camera switch: belly works, front does not; first fix was incomplete
+* User report: switching to the belly camera works, switching back to the front camera kills the video. The log
+  confirms the asymmetry and shows the first fix (01516db) reported success too early:
+  `139.448 video: front camera` (downvision 0 accepted) -> `141.013 video: stream re-opened` -> `153.311 ERR video:
+  no frames for a long time` (12 s, **zero** frames ever decoded) -> re-open -> `Stream timeout triggered after
+  30027 ms`, which blocked the mission loop and froze the page for 30 s.
+  The belly direction opened in 93 ms and streamed fine, so the commands are accepted either way; only the 960x720
+  front encoder fails to resume.
+* Three defects in the first fix, all addressed now:
+  1. `restartVideo()` returned true when `cap_.open()` succeeded, without a single decoded frame. It now calls the
+     new `IFrameSource::waitFirstFrame(4 s)` and only reports success when a frame actually arrives.
+  2. A silent stream blocked `open()`/`read()` for OpenCV's default 30 s. `OPENCV_FFMPEG_READ_TIMEOUT=4000` (ms) is
+     now set for live streams, so a dead stream fails in ~4 s.
+  3. The drone's answers to `streamoff` / `streamon` were never logged, so there was no way to tell whether the
+     Tello acknowledged the restart. Both replies are logged now, including "not acknowledged".
+* Also: the settle time between `streamoff`, `downvision`, `streamon` and the re-open now backs off per attempt
+  (0.8 s, 1.6 s, 2.4 s). Hypothesis to confirm: the front encoder needs longer to re-initialise than the belly one
+  and ignores a `streamon` that arrives too early.
+* **Pi: `git pull` and rebuild before the next power-on.** Test with the drone ON THE GROUND: switch to belly, then
+  back to front, and report the new `video: streamoff -> ...` / `video: streamon -> ...` reply lines plus whether
+  "frames flowing" appears. If the front camera still never delivers a frame, the replies will tell us whether the
+  drone refused the command or accepted it and stayed silent; do not change anything before reporting that.
+* Known remaining limitation: `restartVideo()` runs on the mission loop, so the page still stalls for a few seconds
+  during a switch. Bounded now to roughly 4 s per attempt instead of 30 s.
+
 ### 2026-09-12 20:22 (pi) camera switch test with 01516db: front->belly works, belly->front leaves the drone mute
 Binary rebuilt at 20:07:05 (after 01516db). Three power-ons, all joined and brought the page up without help.
 * **drone-watch timing:** SSID seen -> joined -> ping OK -> ground station started in about 0.5 s every time
