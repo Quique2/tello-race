@@ -26,6 +26,26 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 19:25 (pi) boot layout restored, vnc-screens enabled, Funnel pending approval, simulator on the web
+* This is a new Claude Code session on the Pi (tmux `claude:0`), continuing the paused VS Code Pi session.
+* Why HDMI was on and DSI off after the reboot: at 18:54:21 someone saved an HDMI-only layout in the Control Centre's
+  Screens panel over VNC. That panel rewrites `~/.config/kanshi/config` (anonymous profile HDMI on / DSI off, which
+  matches first) **and** copies it to `/etc/xdg/labwc-greeter/config.kanshi` with sudo. Fix: `install.sh` now also
+  installs `kanshi.config` (profiles `local` + `dsi-only`) to the greeter path. Re-ran it; backups of the panel
+  versions are `*.bak-screens-panel`. **Don't save layouts in the Screens panel**; if someone does, re-run
+  `scripts/pi/vnc-screens/install.sh`. kanshi was not reloaded (a VNC client was connected).
+* `systemctl --user enable --now vnc-screens` at 19:17:20. With 1 client connected it logged `remote: enabled
+  HDMI-A-1, wayvnc captures HDMI-A-1` without changing any output. The service log is in the system journal
+  (`journalctl -b | grep vnc-screens.sh`), not in `journalctl --user`.
+* VNC disconnect/reconnect test: armed, waiting for the user. The journal runs in tmux `claude:journal`; output state
+  and wayvnc PID changes are logged every 0.5 s (wayvnc PID 1684 at the start). Results go in the next entry.
+* Funnel: not enabled on the tailnet yet. The approval link was given to the user in the terminal. `sudo tailscale
+  funnel --bg 8080` waits in tmux `claude:funnel` and finishes once it's approved. URL: `https://quiquepi.tail2b1864.ts.net/`.
+* Simulator with the web page in tmux `claude:sim`: `./build/tello_race sim --headless --track random --episodes 100
+  --seed 300 --set web.enabled=1` (the binary from 17:49 is newer than the last source commit).
+  `curl -s localhost:8080/api/status?token=watch` returns JSON (`phase FOLLOW`, `fps 17.6`, `drone sim`).
+* Pending: user approves Funnel, then phone test (operator/viewer tokens) per PI_PROMPT F; VNC cycle result.
+
 ### 2026-09-12 18:50 (pi) eth0 pinned to 192.168.137.10, Tailscale re-established
 * User gave the go for step 0b. The change had already been applied at 18:40:38 by the laptop session over Tailscale
   SSH (`nmcli con modify netplan-eth0 ipv4.method manual ipv4.addresses 192.168.137.10/24 ipv4.gateway 192.168.137.1
