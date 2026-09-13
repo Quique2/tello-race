@@ -204,7 +204,7 @@ bool MissionLoop::restartVideo(const char* why) {
     // re-initialises its encoder and ignores a streamon that arrives too early. Back off on each try,
     // and never report success until a frame has actually been decoded.
     for (int attempt = 1; attempt <= 3; ++attempt) {
-        double settle = 1.5 * attempt;   // the drone acks streamon and stays mute if it is still switching
+        double settle = 1.0 * attempt;   // time for the encoder to switch: it belongs BEFORE streamon
         LOG_WARN("video: re-requesting the stream (%s, attempt %d/3, settle %.1fs)", why, attempt, settle);
         src_.stop();
         std::string r;
@@ -214,7 +214,8 @@ bool MissionLoop::restartVideo(const char* why) {
         bool onOk = drone_.streamOn();
         LOG_INFO("video: streamon -> %s%s", drone_.lastReply.empty() ? "(no reply)" : drone_.lastReply.c_str(),
                  onOk ? "" : " [not acknowledged]");
-        clock_.sleep(settle);
+        // No pause here on purpose: bind the receiving socket immediately. Waiting after streamon
+        // lets the drone's first packets hit a closed port, and it then stops sending altogether.
         std::string e;
         if (!src_.start(&e)) { LOG_ERROR("video: re-open failed: %s", e.c_str()); clock_.sleep(0.5); continue; }
         if (src_.waitFirstFrame(3.0)) {

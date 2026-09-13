@@ -26,6 +26,27 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 21:35 (laptop) regression found: the delay after streamon is what makes the drone go mute
+* Test with 3f74dc2 (user, drone on the ground, `--log-level debug`): the **belly switch now fails too**, all three
+  attempts. That is a regression: with 01516db the same switch worked in 93 ms. Log: `downvision 1` ok, `streamoff`
+  ok, `streamon` ok, open, then no frame in 3 s, second `streamon`, no frame in 5 s, three times over.
+* The only behavioural difference between the working and failing versions is the pause **after** `streamon` and
+  before the receiving socket is bound: 0.5 s when it worked, 1.5 s (then 3.0 s, 4.5 s) when it fails.
+* Mechanism that fits every observation: the Tello starts sending video the instant it answers `ok` to `streamon`.
+  Nothing is bound on UDP 11111 yet, so the Pi's kernel answers ICMP port-unreachable and the drone stops sending
+  altogether. That explains why it acks every command and stays mute, why longer settles made it strictly worse,
+  and why a power cycle is the only thing that clears it.
+* Fix shipped: the settle now happens **before** `streamon` only (1.0 / 2.0 / 3.0 s per attempt, which is what the
+  encoder needs to change camera), and the socket is bound immediately after `streamon` with no pause at all.
+* Second defect fixed: one open blocked 30 s and the FFmpeg-defaults fallback another 30 s, 60 s in total, because
+  OpenCV's **open** timeout is separate from its read timeout. `OPENCV_FFMPEG_OPEN_TIMEOUT=6000` is now set too.
+  (The opens that returned fast and then produced nothing had almost certainly probed leftover buffered packets.)
+* Unrelated and working correctly: at ~21:32 the drone stopped answering ping entirely. drone-watch stopped the
+  ground station after 20 s unreachable, left the network and rejoined when the SSID came back, exactly as designed.
+* Next test, drone on the ground: switch front -> belly, then belly -> front. Expect "frames flowing" within a
+  second or two. If it still goes mute with the socket bound immediately, the ICMP explanation is wrong and the next
+  step is the isolation experiment: front camera only, no `downvision`, `streamoff` -> wait -> `streamon`.
+
 ### 2026-09-12 20:40 (laptop) stronger restart after the Pi's evidence: longer settle + a second streamon
 * The Pi's 20:22 entry settles the mechanism: the drone answers `ok` to `streamoff`, `downvision 0` and `streamon`
   and then sends **nothing** (wlan0 at 1-2 KiB/s, telemetry only). This is drone-side, not a decoder problem: the
