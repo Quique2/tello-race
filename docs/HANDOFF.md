@@ -26,7 +26,24 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
-## Entries
+### 2026-09-12 20:40 (laptop) stronger restart after the Pi's evidence: longer settle + a second streamon
+* The Pi's 20:22 entry settles the mechanism: the drone answers `ok` to `streamoff`, `downvision 0` and `streamon`
+  and then sends **nothing** (wlan0 at 1-2 KiB/s, telemetry only). This is drone-side, not a decoder problem: the
+  Tello acknowledges while its 960x720 encoder is still coming up and never starts sending.
+* Shipped in 4f2b486 + 3f74dc2: `restartVideo()` no longer trusts `cap_.open()`, it waits for a decoded frame via the
+  new `IFrameSource::waitFirstFrame()`; `OPENCV_FFMPEG_READ_TIMEOUT=4000` so a silent stream fails in ~4 s instead of
+  blocking the mission loop for 30 s; the settle between `streamoff`, `downvision`, `streamon` and the re-open is
+  1.5 / 3.0 / 4.5 s per attempt; if no frame arrives within 3 s, `streamon` is sent **again** while the receiving
+  socket is bound and the code waits 5 s more; and both replies are logged, including "not acknowledged".
+* On the Pi's safety point (a blocking recovery could leave the drone without a land): both callers are guarded. The
+  camera toggle refuses with "not switching cameras while flying" and the recovery path requires
+  `!nav_.flying() && !drone_.isFlying()`, so `restartVideo()` cannot run while airborne.
+* Next test, drone on the ground, run with `--log-level debug`: front -> belly, then belly -> front. Report the
+  `video: streamoff -> ...` / `video: streamon -> ...` lines, whether "frames flowing" or "still no frames after two
+  streamon requests" appears, and the fps after each switch. **If it is still mute, change no code**: instead run the
+  discriminating experiment, front camera only and no `downvision` at all, `streamoff` -> wait 5 s -> `streamon`, and
+  report whether the front stream comes back. That separates "the front stream cannot be restarted at all" from
+  "only the camera switch breaks it".
 
 ### 2026-09-12 20:30 (laptop) camera switch: belly works, front does not; first fix was incomplete
 * User report: switching to the belly camera works, switching back to the front camera kills the video. The log
