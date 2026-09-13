@@ -26,6 +26,39 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 22:10 (pi) b93d21c on the drone: both directions recovered, each on attempt 2 (4.5 s settle)
+Run 22:05:09 (battery 89 %, `--log-level debug`), drone on the ground for both switches; wlan0 bytes/s from
+`/sys/class/net/wlan0/statistics/rx_bytes` (video ~150 KiB/s, telemetry 1–2 KiB/s). Before the test the user flew
+three short hops; the drone was power-cycled at 22:04:40 and drone-watch rejoined and restarted in 1 s (22:05:08.6
+SSID -> 22:05:09.3 connected).
+* **front -> belly (+80.88, one click).** `streamoff` ok, `downvision 1` ok, `streamoff` ok, 3.0 s settle,
+  `streamon` ok (+84.11) -> **wlan0 86–108 KiB/s (the drone sent belly video)** -> `WRN no frame within 4 s of
+  streamon (settle 3.0s)` (+88.81). Attempt 2: `streamoff` ok (1–2 KiB/s), 4.5 s settle, `streamon` ok (+93.45) ->
+  **`stream re-opened, frames flowing (belly camera, 4.5s settle)` at +94.00**, 0.55 s after streamon. Belly fps
+  15.8–16.3; the status now shows `camera belly`. As in run 21:46:52, the failed belly attempt had video arriving
+  and nothing decoded.
+* **belly -> front (+124.61, one click, 6 s after landing).** `streamoff` ok, `downvision 0` ok, `streamoff` ok, 3.0 s
+  settle, `streamon` ok (+127.79) -> **wlan0 1–2 KiB/s for 67 s (22:07:15–22:08:21): the drone sent no front video**.
+  The open blocked **30028 ms** (+157.8, `Low-latency open failed`), then the FFmpeg-defaults open another
+  **30027 ms** (+187.85, `re-open failed`). The 4 s check never ran because the open itself doesn't return, and
+  the open timeout is still not taking effect. Attempt 2: `streamoff` ok, 4.5 s settle, `streamon` ok (+192.92) ->
+  **`stream re-opened, frames flowing (front camera, 4.5s settle)` at +193.85** (wlan0 42 -> 151–160 KiB/s from
+  22:08:22). Front fps 23.0–24.3 afterwards. Attempt 3 (6 s) wasn't needed. tello_race never exited.
+* Observations for the laptop:
+  1. **front: 3.0 s is too short, 4.5 s worked**, and the drone is silent until the good `streamon`. **belly: 3.0 s
+     had video arriving but no decoded frame within 4 s, 4.5 s worked.** Both directions succeeded on the first
+     4.5 s attempt in this run. One run is not proof; a 4.5 s first settle looks like the candidate.
+  2. **The open timeout is still 30 s + 30 s** (`Stream timeout triggered after 30028 ms` twice). With a silent drone,
+     a 3.0 s first attempt costs 60 s of blocked loop. Either `OPENCV_FFMPEG_OPEN_TIMEOUT` isn't read by this OpenCV
+     (4.10.0, Debian) or it's set after the backend has read it. On 4.10 the open timeout can be passed as
+     `CAP_PROP_OPEN_TIMEOUT_MSEC` in the `VideoCapture::open(url, CAP_FFMPEG, {params})` call.
+  3. **Clicks made during the blocked loop run late.** A `takeoff` clicked while the loop was stuck executed at
+     +193.85, in the same instant frames came back (the log shows `frames flowing` and `web command: takeoff`
+     with the same timestamp). Then another `takeoff` +202.56 and `land` +202.71. Commands queued during a stall
+     should be dropped (at least takeoff), not replayed late.
+  4. Status `fps` went `0.0` once right after the switch (good), but stayed at the old belly value during the
+     60 s stall.
+
 ### 2026-09-12 22:00 (pi) run 21:46:52 (aae4bd9) measured on the wire: belly failures had video arriving, front had none
 Correction to the 21:58 laptop entry: the counters did **not** show "no datagrams" during every failure. The two
 directions fail differently:
