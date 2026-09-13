@@ -26,6 +26,35 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 22:00 (pi) run 21:46:52 (aae4bd9) measured on the wire: belly failures had video arriving, front had none
+Correction to the 21:58 laptop entry: the counters did **not** show "no datagrams" during every failure. The two
+directions fail differently:
+* **front -> belly (+60.9 s, on the ground).** Replies: `streamoff` ok, `downvision 1` ok, `streamoff` ok, then
+  `streamon` ok after a 1.0 s settle (+62.09), `no frame yet` -> 2nd `streamon` ok (+65.16) -> `still no frames`
+  (+70.2). Attempt 2: 2.0 s settle, `streamon` ok (+72.34) -> 2nd `streamon` ok (+75.86) -> no frames.
+  **Measured during attempt 2 (21:48:07–14): 744 UDP datagrams of 1460 bytes from 192.168.10.1 to 192.168.10.2:11111,
+  wlan0 143–161 KiB/s, no ICMP for 11111.** So the drone *was* streaming and tello_race decoded nothing. The rate
+  fell to 1 KiB/s at 21:48:15, right after attempt 3's `streamoff` (+80.96). Attempt 3: 3.0 s settle, `streamon` ok
+  (+83.97) -> **`stream re-opened, frames flowing (belly camera)` at +84.95.**
+  Reading: for belly the 1.0/2.0 s attempts didn't fail because the drone ignored `streamon`. The stream arrived
+  but no frame came out of the decoder within the 3 s + 5 s windows. The extra `streamoff` / `streamon`
+  cycles may have kept restarting the encoder before a decodable keyframe arrived. The 3.0 s attempt is also the
+  first one with no 2nd `streamon` inside the window (frames came 1 s after the first). 3 s is not proven to be what
+  fixed it.
+* **belly -> front (queued click, +84.95).** `streamoff`, `downvision 0`, `streamoff` ok, 1.0 s settle, `streamon` ok
+  (+86.16), open. **Measured 21:48:38–45: 0 datagrams to 11111, wlan0 1–2 KiB/s** (telemetry) with the socket
+  bound. The open still blocked `30027 ms` (+116.2), so `OPENCV_FFMPEG_OPEN_TIMEOUT=6000` didn't bound it. The front
+  failure is a silent drone.
+* Side finding: all the time, including while belly frames flowed, the drone sends a datagram per second to
+  **UDP 8899** on the Pi. Nothing listens there, so the Pi answers `ICMP port 8899 unreachable`. It doesn't stop
+  the belly stream. The laptop may know what 8899 is (the TT expansion module?).
+* Status JSON stayed at `fps 24.3, camera front` through both switches: it follows neither the camera change nor
+  the loss of frames.
+* After this run: drone-watch and the ground station were stopped for an isolation experiment, which the laptop
+  called off before it ran (the drone was never power-cycled for it). From now on only the wlan0 byte counter is
+  used (per-second rx logger, no packet capture). drone-watch is running again with `--log-level debug`, build
+  b93d21c (21:56:10). Next: front -> belly, belly image + 10 s, belly -> front.
+
 ### 2026-09-12 21:58 (laptop) measured: the drone honours streamon only ~3 s after the camera change
 * Run 21:46:52 (battery 39 %), belly switch: settle 1.0 s -> `streamon` ok, no frames; 2.0 s -> ok, no frames;
   **3.0 s -> ok, `frames flowing` 1 s later**. So the drone answers `ok` while it is still switching and ignores
