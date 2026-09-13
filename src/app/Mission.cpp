@@ -40,6 +40,7 @@ private:
     void startRecording();
     void stopRecording();
     void record(const cv::Mat& frame, const Observation& obs, const TelloState& st);
+    bool restartVideo(const char* why);   // re-request the Tello stream and re-open the decoder
     std::string stateJson(const Observation& obs, const TelloState& st, double fps);
     void applyWebCommand(const WebCommand& c);
     void setManual(bool on);
@@ -57,6 +58,7 @@ private:
     bool recording_ = false, showMask_ = true, showDebug_ = true, quitting_ = false;
     uint64_t seq_ = 0;
     int startAtTag_ = 0;
+    int videoRecoveries_ = 0;
     std::string recBase_;
     WebServer* web_ = nullptr;   // owned by runFly/runSim so it outlives simulator episodes
     bool webOn_ = false;
@@ -98,8 +100,16 @@ int MissionLoop::run() {
         WebCommand wc;
         while (webOn_ && web_->popCommand(wc)) applyWebCommand(wc);
         bool got = src_.latest(frame, seq_, 0.25);
-        if (got) { seq_ = frame.seq; haveFrame = true; lastFrameWall = wall.now(); }
-        else if (src_.ended()) { LOG_INFO("end of video source"); break; }
+        if (got) { seq_ = frame.seq; haveFrame = true; lastFrameWall = wall.now(); videoRecoveries_ = 0; }
+        else if (src_.ended()) {
+            // A live Tello stream stops on a camera switch or a Wi-Fi hiccup. Ask for it again and
+            // re-open the decoder so the ground-station page survives; only give up after that fails.
+            bool recoverable = !sim_ && src_.isLive() && !quitting_ && !nav_.flying() && !drone_.isFlying();
+            if (!recoverable || ++videoRecoveries_ > 5 || !restartVideo("stream stopped")) {
+                LOG_INFO("end of video source");
+                break;
+            }
+        }
         TelloState st = drone_.state();
         Observation obs;
         double hx = 0, hy = 0;
@@ -189,6 +199,23 @@ void MissionLoop::applyWebCommand(const WebCommand& c) {
     else if (c.cmd == "tag") handleKey('0' + std::max(0, std::min(3, atoi(c.arg.c_str()))));
 }
 
+bool MissionLoop::restartVideo(const char* why) {
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+        LOG_WARN("video: re-requesting the stream (%s, attempt %d/3)", why, attempt);
+        src_.stop();
+        std::string r;
+        drone_.command("streamoff", &r, 3.0);
+        clock_.sleep(0.5);
+        drone_.streamOn();
+        clock_.sleep(0.5);
+        std::string e;
+        if (src_.start(&e)) { seq_ = 0; LOG_INFO("video: stream re-opened"); return true; }
+        LOG_ERROR("video: re-open failed: %s", e.c_str());
+        clock_.sleep(1.0);
+    }
+    return false;
+}
+
 void MissionLoop::setManual(bool on) {
     if (on == manual_) return;
     manual_ = on;
@@ -247,11 +274,14 @@ bool MissionLoop::handleKey(int key) {
             if (nav_.flying() || drone_.isFlying()) { LOG_WARN("not switching cameras while flying"); return true; }
             bool on = !td->downvision();
             src_.stop();
-            if (td->setDownvision(on)) { perception_.setDownwardCamera(on); LOG_INFO("video: %s camera", on ? "downward (belly)" : "front"); }
-            drone_.streamOn();
-            std::string e;
-            if (!src_.start(&e)) LOG_ERROR("video restart failed: %s", e.c_str());
-            seq_ = 0;
+            std::string r;
+            drone_.command("streamoff", &r, 3.0);   // the belly camera streams 320x240 grey, the front 960x720:
+            if (td->setDownvision(on)) {            // the decoder must be torn down before the format changes
+                perception_.setDownwardCamera(on);
+                LOG_INFO("video: %s camera", on ? "downward (belly)" : "front");
+            }
+            videoRecoveries_ = 0;
+            if (!restartVideo(on ? "belly camera" : "front camera")) LOG_ERROR("video did not come back after the camera switch");
             return true;
         }
         case 'd': showDebug_ = !showDebug_; return true;

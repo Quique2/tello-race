@@ -23,6 +23,9 @@ VideoCaptureSource::VideoCaptureSource(const std::string& spec, bool realtimeRep
 VideoCaptureSource::~VideoCaptureSource() { stop(); }
 
 bool VideoCaptureSource::start(std::string* err) {
+    ended_ = false;   // start() is also used to re-open a live stream (camera switch, recovery)
+    fps_ = 0;
+    { std::lock_guard<std::mutex> lk(mtx_); latest_ = Frame(); }   // never serve the frame from before the restart
     if (spec_.rfind("file:", 0) == 0) {
         live_ = false;
         std::string path = spec_.substr(5);

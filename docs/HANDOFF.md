@@ -26,6 +26,32 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 20:05 (laptop) root cause of the 502 loop: the camera switch kills the video stream
+* The user reported the page returning HTTP 502 and said it started when he switched cameras. The log confirms it
+  (`logs/ground_station.log`, run of 19:46:52, battery 79 %, six good minutes including a real manual take-off):
+  `365.1 land` -> `378.8 web command: camera` -> `video: downward (belly) camera` -> `390.4 camera` ->
+  `video: front camera` -> `403.4 ERR video: no frames for a long time, stream ended?` -> exit.
+  Every restart after that got **zero** frames from t=0 and died at the same ~12.9 s (the 300-fail counter), so the
+  drone had stopped sending video altogether; it only came back after the user powered the drone off.
+* Why: the belly camera streams 320x240 grey, the front 960x720 H.264. `downvision` changes the format of the same
+  UDP stream, and the FFmpeg decoder cannot follow that mid-stream. The toggle did stop and restart the source, but:
+  1. `VideoCaptureSource::start()` never reset `ended_`, so a re-opened source could report "ended" forever;
+  2. `start()` kept the previous frame, so a restart could serve one stale frame;
+  3. `streamon` was re-sent without a `streamoff` first and with no settling time, so the Tello was left with a
+     half-configured encoder;
+  4. any video gap ended the whole mission (`end of video source` -> process exit), and `drone-watch` restarted it,
+     which is what produced the 502 every few seconds.
+* Fixed on the laptop (built and simulator-verified): `start()` clears `ended_`, the stale frame and the fps counter;
+  a new `MissionLoop::restartVideo()` does `streamoff` -> (camera switch) -> 0.5 s -> `streamon` -> 0.5 s -> re-open,
+  3 attempts; the camera toggle uses it; and a live stream that stops while the drone is on the ground is recovered
+  the same way (up to 5 rounds) instead of ending the mission, so the page stays up. While airborne the old
+  behaviour is kept: no video means land.
+* **Pi: `git pull` and `cmake --build --preset linux-release` before the next power-on.** Then the test is: power on,
+  wait for the page, press CAMERA front/belly twice with the drone on the ground, and check that the video comes back
+  each time and `tello_race` does not exit. Report the log lines around each switch.
+* Separate issue, not the cause: the drone sat powered on and idle and reached **85-88 C** with the battery down to
+  44 %. Power it off between tests; it is also the way to clear a stuck video encoder.
+
 ### 2026-09-12 19:50 (laptop) first real power-on: automatic join and ground station verified end to end
 * Drone powered on by the user at ~19:46:30. drone-watch journal: 19:46:51.7 `TELLO-FE18DB visible, joining`,
   19:46:52.3 joined (wlan0 192.168.10.2, default route stayed on eth0), 19:46:52.3 drone answers, 19:46:52.4
