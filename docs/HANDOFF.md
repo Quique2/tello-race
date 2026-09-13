@@ -26,6 +26,23 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 22:18 (pi) stuck `flying` flag: the drone landed by itself, TAKE OFF ignored, LAND answered `error`
+Run 22:13:15 (battery 100 %, b93d21c, debug):
+* +16.58 `takeoff` -> `ok` (+23.83). No `land` was sent after that. By +68 s the drone was on the ground (status
+  `flying true`, **`h 0`, `tof 10`**, bat 75 %), apparently after landing by itself.
+* +68.11, +69.58 and +95.71: the user pressed TAKE OFF. `web command: takeoff` was logged, but **no `Tello >> takeoff`
+  was sent**, because tello_race still believed it was flying. CAMERA would also have been refused ("while flying").
+* +84.42: LAND from the page -> `Tello << error` -> `WRN command 'land' answered 'error'`. `TelloDrone::command()`
+  clears `flying_` only on `ok` (and on `emergency`), so the flag stayed true.
+* Cleared only by a drone power cycle (22:14:34 unreachable -> drone-watch stopped at 22:15:18 -> new run 22:15:29
+  `flying false`).
+* For the laptop:
+  1. When telemetry says the drone is on the ground (e.g. `h == 0` and `tof <= 10` for ~1 s while `flying_`),
+     clear `flying_` (and the navigator's flying state) and log it.
+  2. `land` answered `error` while `flying_` is true should also clear it, or trigger that telemetry check. The Tello
+     answers `error` to `land` when it is already on the ground.
+  3. TAKE OFF ignored because "already flying" should give the page a visible message instead of doing nothing.
+
 ### 2026-09-12 22:10 (pi) b93d21c on the drone: both directions recovered, each on attempt 2 (4.5 s settle)
 Run 22:05:09 (battery 89 %, `--log-level debug`), drone on the ground for both switches; wlan0 bytes/s from
 `/sys/class/net/wlan0/statistics/rx_bytes` (video ~150 KiB/s, telemetry 1–2 KiB/s). Before the test the user flew
