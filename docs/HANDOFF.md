@@ -42,6 +42,11 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 * For the laptop: when `takeoff` is answered `error`, the notice could add the likely checks (level surface,
   propellers/mount, temperature `temph`, "open the Tello app for the reason"). The operator pressed TAKE OFF 23
   times because the notice gives no hint what to do.
+* Run 17:50:22 (battery 90 %, board 64 °C at start, ~4 min after the previous power-off): **takeoff accepted**
+  (+19.09 -> `ok` +25.70). What the user changed (mount off / surface / cooling) is not known yet. Then three
+  **`flip f` from the page, all `ok` -> `notice: flip done`** (+46.37, +60.96, +65.49; ~3.5 s blocking each), land
+  +80.72 -> `ok` +85.81 (the telemetry clear fired at +85.69 with the misleading "(it landed by itself)" label).
+  90 -> 71 % battery, board 73–78 °C. Powered off ~17:52:30.
 
 ### 2026-09-13 17:25 (pi) 5548699 on the drone (12:23 session): heartbeat, 4 s capture timeout and ground recovery confirmed
 Binary built 01:27:55 (after 5548699); 74b5970 (print files only) pulled, no rebuild needed. Data: per-second state
