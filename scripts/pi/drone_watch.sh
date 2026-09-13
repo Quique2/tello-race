@@ -17,6 +17,8 @@ INTERVAL=5
 PING_WAIT=20     # seconds to wait for the drone to answer after joining
 DROP_AFTER=20    # seconds unreachable before the ground station is stopped
 RETRY_AFTER=10   # pause after tello_race exits before it may be started again
+# extra tello_race options, e.g. GROUND_STATION_ARGS="--log-level debug" in ~/.config/drone-watch.env
+read -r -a GS_ARGS <<< "${GROUND_STATION_ARGS:-}"
 
 log() { logger -t drone-watch -- "$*"; echo "drone-watch: $*"; }
 
@@ -52,7 +54,7 @@ free_port() {  # stop whatever tello_race (simulator, replay) listens on the web
 start_station() {
 	free_port || return 1
 	log "starting ground station (tello_race fly) in tmux window claude:drone"
-	"$REPO/scripts/pi/ground_station.sh" start 2>&1 | logger -t drone-watch
+	"$REPO/scripts/pi/ground_station.sh" start "${GS_ARGS[@]}" 2>&1 | logger -t drone-watch
 	sleep 2
 	if [ -n "$(fly_pid)" ]; then log "tello_race fly running (pid $(fly_pid))"; else log "tello_race fly did not start"; return 1; fi
 }
@@ -73,7 +75,7 @@ ensure_profile() {
 until nmcli -t general status >/dev/null 2>&1; do sleep 2; done
 nmcli -t -f NAME con show 2>/dev/null | grep -Fxq "$PROFILE" || { log "profile $PROFILE missing (see docs/HANDOFF.md)"; exit 1; }
 ensure_profile
-log "started: waiting for $SSID (repo $REPO)"
+log "started: waiting for $SSID (repo $REPO)${GS_ARGS[*]:+, tello_race options: ${GS_ARGS[*]}}"
 
 station=0         # 1 while we believe a ground station started by us is running
 unreachable=0     # seconds the drone has not answered while joined
