@@ -26,6 +26,22 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 19:45 (pi) dry test of the start path without the drone: two bugs in ground_station.sh fixed
+* After the reboot the laptop ran `boot_check.sh` and everything passed. Then `scripts/pi/ground_station.sh start`
+  was run with drone-watch left running.
+* Bug 1: `tmux new-window -t claude` targets window index 0 ("create window failed: index 0 in use"), so no `drone`
+  window was created, yet the script printed "running". Fixed: `-t claude:` (next free index), a failed
+  `new-window` now exits 1, and the script exits 1 when nothing listens on 8080 after 15 s.
+* Bug 2: with no extra options, `printf ' %q' "$@"` passed an empty `''` argument -> tello_race `unknown option`
+  and exit 1 before ever contacting the drone. This would also have broken drone-watch's start on race day. Fixed.
+* tello_race output now also goes to `logs/ground_station.log` (header and exit code per run).
+* Result after the fixes (19:41:37): window `claude:drone` created at +1 s, `Tello: entering SDK mode` attempts 1–4,
+  each `timeout (3.0s) waiting for reply to 'command'`, then `ERR no answer from the Tello at 192.168.10.1` and
+  `exit 1` at +13 s. The script reports "not listening on 8080" (rc 1). Funnel status unchanged (diff before/after),
+  port 8080 free, drone-watch still active and waiting (drone_watch.sh unchanged, it calls the fixed script).
+* Note: tello_race opens port 8080 only after the drone answers `command`, so the page gives 502 until then.
+  That fits the race-day procedure.
+
 ### 2026-09-12 19:40 (pi) race day on power-on: drone-watch service, replay of real frames 28 fps, boot check script
 **Race-day procedure (user):**
 1. The Pi is powered and wired to the laptop (the laptop's internet sharing must be on). Nothing needs to be started on

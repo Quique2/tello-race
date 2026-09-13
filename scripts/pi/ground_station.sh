@@ -10,6 +10,9 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SESSION=claude
 WINDOW=drone
 PORT=8080
+LOG=logs/ground_station.log   # tello_race output, appended (relative to the repo)
+
+window_exists() { tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep -Fxq "$WINDOW"; }
 
 funnel_url() {
 	local name
@@ -29,12 +32,13 @@ case "$cmd" in start|stop|status) shift || true ;; *) cmd=start ;; esac
 
 case "$cmd" in
 stop)
-	tmux has-session -t "$SESSION:$WINDOW" 2>/dev/null && tmux send-keys -t "$SESSION:$WINDOW" C-c
-	sleep 2; tmux kill-window -t "$SESSION:$WINDOW" 2>/dev/null
+	window_exists && tmux send-keys -t "$SESSION:$WINDOW" C-c
+	sleep 2; window_exists && tmux kill-window -t "$SESSION:$WINDOW"
 	echo "ground station stopped"
 	exit 0 ;;
 status)
-	tmux has-session -t "$SESSION:$WINDOW" 2>/dev/null && echo "tmux window $SESSION:$WINDOW running" || echo "not running"
+	window_exists && echo "tmux window $SESSION:$WINDOW exists" || echo "no tmux window $SESSION:$WINDOW"
+	pgrep -af '^\./build/tello_race fly( |$)' || echo "tello_race fly not running"
 	ss -ltn | grep -q ":$PORT " && echo "port $PORT listening" || echo "port $PORT not listening"
 	tailscale funnel status 2>/dev/null
 	exit 0 ;;
@@ -45,13 +49,20 @@ if ss -ltn | grep -q ":$PORT "; then echo "port $PORT already in use (another te
 ping -c 1 -W 1 192.168.10.1 >/dev/null 2>&1 || echo "warning: drone 192.168.10.1 not reachable (scripts/pi/drone_wifi.sh up)" >&2
 
 tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION" -c "$REPO"
-tmux kill-window -t "$SESSION:$WINDOW" 2>/dev/null
-args=$(printf ' %q' "$@")
-tmux new-window -d -t "$SESSION" -n "$WINDOW" -c "$REPO" \
-	"./build/tello_race fly --headless --set web.enabled=1$args; echo; echo 'tello_race exited - press Enter to close'; read"
+window_exists && tmux kill-window -t "$SESSION:$WINDOW"
+mkdir -p "$REPO/logs"
+args=""; [ $# -gt 0 ] && args=$(printf ' %q' "$@")   # no options -> nothing (printf alone would pass '')
+# "-t session:" = next free index in that session ("-t session" means its window 0 and fails when it exists)
+tmux new-window -d -t "$SESSION:" -n "$WINDOW" -c "$REPO" \
+	"echo \"=== \$(date '+%F %T') tello_race fly$args\" >> $LOG; ./build/tello_race fly --headless --set web.enabled=1$args 2>&1 | tee -a $LOG; echo \"=== \$(date '+%F %T') exit \${PIPESTATUS[0]}\" | tee -a $LOG; echo 'tello_race exited - press Enter to close'; read" ||
+	{ echo "could not create tmux window $SESSION:$WINDOW" >&2; exit 1; }
 ensure_funnel
 
-for i in $(seq 1 20); do ss -ltn | grep -q ":$PORT " && break; sleep 0.5; done
-echo "tello_race fly running in tmux window $SESSION:$WINDOW (tmux attach -t $SESSION)"
+# tello_race opens the web port only after the drone answers "command" (up to 4 x 3 s)
+for i in $(seq 1 30); do ss -ltn | grep -q ":$PORT " && break; sleep 0.5; done
+if ! ss -ltn | grep -q ":$PORT "; then
+	echo "tello_race fly is not listening on $PORT (see tmux window $SESSION:$WINDOW and $LOG)" >&2; exit 1
+fi
+echo "tello_race fly running in tmux window $SESSION:$WINDOW (tmux attach -t $SESSION), log $LOG"
 echo "local : http://$(ip -4 -br addr show eth0 | awk '{print $3}' | cut -d/ -f1):$PORT/"
 url=$(funnel_url); [ -n "$url" ] && echo "public: $url   (add ?token=watch to spectate; operator token from config/default.ini)"
