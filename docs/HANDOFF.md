@@ -26,6 +26,39 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-12 18:45 (pi) wayvnc crash: root cause is a stuck HDMI-A-1 in labwc, script rewritten, reboot pending
+* Read the 18:30 laptop entry. Timeline from the journal plus `~/.xsession-errors` (labwc log, its timestamps are
+  time since labwc start, 15:10:14):
+  - 18:13:56 first real disconnect -> old script: `wlr-randr --output DSI-2 --on` while HDMI was the only output
+    failed (`Swapchain for output 'DSI-2' failed test`), the kanshi SIGHUP applied "local", HDMI-A-1 was switched off,
+    the MacroSilicon dongle dropped hotplug, wayvnc logged `Selected output HDMI-A-1 went away`, the connector came back.
+  - from 18:16:19 on, **every** output configuration that touches HDMI-A-1 fails in labwc:
+    `drmCrtcGetSequence: Invalid argument` + `connector HDMI-A-1: liftoff_output_apply failed: Operation not permitted`.
+    Because labwc applies all outputs at once, even `DSI-2 --on` (already on) failed, and wayvnc segfaulted on those
+    failed configurations (18:25:37, 18:25:57). The kernel side is clean (no vc4 errors, connector `connected`,
+    labwc is DRM master on card2); `echo on > /sys/class/drm/card2-HDMI-A-1/status` does not clear it. Tested again
+    18:34 with the journal open: `wlr-randr --output HDMI-A-1 --on` still fails (wayvnc survived that one).
+  - Conclusion: the crash trigger is a failed/no-op output commit, and the HDMI output stays broken until labwc
+    restarts. Only a reboot (or logout) recovers it.
+* Changes (all in `scripts/pi/vnc-screens/`, installed with `install.sh`):
+  - `vnc-screens.sh` rewritten as suggested: sequential `wlr-randr` steps with 1 s pauses, each step skipped when it
+    would change nothing, state checked after each step, never switches off the last enabled output, no kanshi
+    SIGHUP (kanshi config now only holds the boot/hotplug layout: `local` + `dsi-only`). connect -> HDMI on, 1 s,
+    `output-set HDMI-A-1`, 1 s, DSI off; last disconnect -> DSI on, 1 s, `output-set DSI-2`, 1 s, HDMI off.
+    `VNC_SCREENS_TOGGLE=0` keeps both outputs on and only switches the capture (fallback test).
+  - `ExecStopPost` calls `vnc-screens.sh --ensure-local` (turns DSI-2 on only if it is off: no no-op commit).
+  - `/boot/firmware/cmdline.txt` += `video=HDMI-A-1:1920x1080@60D` (backup `cmdline.txt.bak-vnc-screens`) so the
+    connector can not disappear when the dongle loses signal; the hotplug is what preceded the stuck state.
+  - The service is **disabled** for the reboot; it is re-enabled only after the manual test with the journal.
+* Next (after the user reboots): check both outputs exist, run the connect/disconnect sequence by hand with the journal
+  in tmux window `claude:journal`, then with the service; if wayvnc still segfaults, `VNC_SCREENS_TOGGLE=0` and a
+  wayvnc drop-in without `--gpu`.
+* Manual recovery over SSH if both screens end up off:
+  `WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000 wlr-randr --output DSI-2 --on`
+  (and `systemctl --user stop vnc-screens`).
+* Not done: the laptop SSH key from PI_PROMPT 0a. The Pi session's permission check refused to add a key taken from
+  a repository file; the user will confirm or add it. Tailscale SSH works meanwhile.
+
 ### 2026-09-12 18:30 (laptop) VNC crash found: wayvnc segfaults when vnc-screens switches outputs
 * Journal on the Pi (`journalctl --since "10 min ago" | grep -iE "wayvnc|vnc-screens"`): on every VNC client connect
   (18:25:37, 18:25:57) `wayvnc[...]: Segmentation fault`, `wayvnc.service ... status=139`, at the same instant

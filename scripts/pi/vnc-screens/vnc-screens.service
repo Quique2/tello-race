@@ -1,0 +1,16 @@
+[Unit]
+Description=Screens follow the VNC connection (DSI-2 local, HDMI-A-1 while a VNC client is connected)
+# wayvnc.service is a system unit (user vnc); the script waits for its socket itself.
+# graphical-session.target is never started by labwc on Raspberry Pi OS, so the unit
+# hangs off default.target and waits for the compositor.
+PartOf=graphical-session.target
+
+[Service]
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStart=%h/.local/bin/vnc-screens.sh
+ExecStopPost=-%h/.local/bin/vnc-screens.sh --ensure-local
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
