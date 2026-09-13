@@ -47,6 +47,14 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
   **`flip f` from the page, all `ok` -> `notice: flip done`** (+46.37, +60.96, +65.49; ~3.5 s blocking each), land
   +80.72 -> `ok` +85.81 (the telemetry clear fired at +85.69 with the misleading "(it landed by itself)" label).
   90 -> 71 % battery, board 73–78 °C. Powered off ~17:52:30.
+* Run 17:54:35 (battery 100 %, board 68 °C at start): takeoff +38.85 -> `ok` +43.70 (takeoff false alarm `... for
+  7.5s`). **Queued flip clicks are replayed back-to-back:** `flip f` +63.017 -> `ok` +66.612, then `flip b` sent at
+  **+66.612** (same ms) -> `ok` +70.235, then another `flip b` sent at **+70.235** (same ms) -> `ok` +73.806. The
+  clicks made while a 3.6 s flip was blocking were queued and executed one after another without pause: unplanned
+  extra flips. Land +78.18 -> `ok` +81.01. Powered off ~17:56:07. Board 76–78 °C.
+  **For the laptop:** drop flip/takeoff commands that arrive while a blocking command is running (or de-duplicate
+  them), and ignore FLIP for ~1 s after a flip finishes; same class of problem as the late takeoff in the 22:10
+  entry (item 3).
 
 ### 2026-09-13 17:25 (pi) 5548699 on the drone (12:23 session): heartbeat, 4 s capture timeout and ground recovery confirmed
 Binary built 01:27:55 (after 5548699); 74b5970 (print files only) pulled, no rebuild needed. Data: per-second state
