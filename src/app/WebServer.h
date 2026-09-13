@@ -85,6 +85,9 @@ struct StateSnapshot {
     int tagId = 0;
     double tagX = 0;
     int rc[4] = {0, 0, 0, 0};
+    double rcAge = -1;     // s since the page last sent sticks (manual mode), -1 otherwise
+    bool stale = false;    // dead-man has released the sticks
+    int wifi = 0;          // drone link signal, dBm (0 = unknown)
     std::vector<std::string> events;
 };
 std::string stateToJson(const StateSnapshot& s);

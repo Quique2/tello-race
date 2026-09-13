@@ -23,7 +23,7 @@ button:disabled{opacity:.4;cursor:not-allowed}.btns{display:grid;grid-template-c
 .start{background:var(--ok);color:#062}.land{background:var(--acc)}.emg{background:var(--bad);grid-column:1/-1;font-size:15px}
 .phase{font-size:20px;font-weight:700}.ev{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dim);max-height:180px;overflow:auto;white-space:pre-wrap}
 select,input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid #2b3442;background:#0f1216;color:var(--fg)}
-.viewer .op{display:none}.bat.low{color:var(--bad)}
+.viewer .op{display:none}.bat.low,#link.low{color:var(--bad)}
 .modes{display:flex;gap:6px;margin-left:auto}.modes button{width:auto;padding:6px 14px;background:#2b3442}.modes button.sel{background:var(--acc)}
 body.manual .mission-only{display:none}body.mission .manual-only{display:none}
 .pads{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}.pad{position:relative;aspect-ratio:1;border-radius:50%;background:#0f1216;border:2px solid #2b3442;touch-action:none;user-select:none}
@@ -38,7 +38,7 @@ button.arm{background:var(--warn)!important;color:#000}input[type=range]{width:1
 static const char* kPageB = R"HTML(<header><h1>tello_race</h1><span><span class="dot" id="dot"></span><span id="conn">connecting</span></span>
 <span class="kv">drone <b id="drone">-</b></span><span class="kv">battery <b id="bat" class="bat">-</b></span>
 <span class="kv">height <b id="h">-</b></span><span class="kv">temp <b id="temp">-</b></span>
-<span class="kv">video <b id="fps">-</b></span><span class="kv">role <b id="role">-</b></span>
+<span class="kv">video <b id="fps">-</b></span><span class="kv">role <b id="role">-</b></span><span class="kv">link <b id="link">-</b></span>
 <span class="modes op"><button id="mMission" class="sel">MISSION</button><button id="mManual">MANUAL</button></span></header>
 <main>
 <section>

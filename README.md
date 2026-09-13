@@ -84,6 +84,12 @@ console). Keep the operator token secret; share the viewer token for spectators.
 up the Pi ground station (build, Tailscale, VNC, drone Wi-Fi plus internet, Funnel) is `docs/PI_PROMPT.md`;
 progress between the two machines is tracked in `docs/HANDOFF.md`.
 
+**Outdoors and range.** The drone is the Wi-Fi access point and the Pi's built-in antenna is the weak end of the
+link: through walls expect tens of metres at best, in open air 50-100 m. Keep the Pi near a window or take it
+outside. The page header shows the drone link in dBm and, in manual flight, the age of the last stick input; if
+it turns red with "STICKS RELEASED", your phone or laptop lost contact with the Pi for more than 0.5 s and the
+drone hovers until input returns. Wind easily overpowers a 40% stick: raise the speed slider outdoors.
+
 **Mission / manual toggle.** The header has two buttons. MISSION is the autonomous mode (START runs the race
 navigator). MANUAL hands the sticks to the browser: TAKE OFF, then keys `W/S` forward/back, `A/D` left/right,
 `R/F` up/down, `Q/E` yaw, space = stop, or drag the two on-screen pads on a phone; the speed slider scales the

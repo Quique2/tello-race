@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,26 @@
 #include "vision/Perception.h"
 
 namespace {
+
+// Signal level of the wireless interface that carries the drone link (Linux /proc/net/wireless), dBm; 0 if unknown.
+static int readWifiSignalDbm() {
+#ifdef _WIN32
+    return 0;
+#else
+    FILE* f = fopen("/proc/net/wireless", "r");
+    if (!f) return 0;
+    char line[256]; int result = 0;
+    while (fgets(line, sizeof(line), f)) {
+        char ifname[32]; unsigned status; double link, level;
+        if (sscanf(line, " %31[^:]: %x %lf %lf", ifname, &status, &link, &level) == 4) {
+            result = (int)level;
+            if (strcmp(ifname, "wlan0") == 0) break;
+        }
+    }
+    fclose(f);
+    return result;
+#endif
+}
 
 double wallNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
@@ -66,6 +87,9 @@ private:
     bool manual_ = false;                 // manual mode: the browser drives the sticks, the navigator is idle
     int manualRc_[4] = {0, 0, 0, 0};
     double manualRcT_ = 0;
+    double lastStaleLog_ = 0;
+    int wifiDbm_ = 0;      // drone link as seen by the ground station, dBm (0 = unknown)
+    double wifiT_ = 0;
 };
 
 int MissionLoop::run() {
@@ -117,7 +141,10 @@ int MissionLoop::run() {
         perception_.setLineHint(nav_.lineHint(hx, hy), hx, hy);
         if (got) obs = perception_.process(frame.image, st, frame.stamp, frame.seq);
         else { obs.stamp = clock_.now(); obs.blindZoneM = perception_.projector().blindZoneX(); }
-        if (!sim_ && !nav_.flying() && wall.now() - lastKeepAlive > 8.0) {   // keep SDK mode alive while idle on the ground
+        // Keep SDK mode alive while idle on the ground. Never while airborne in ANY mode: a blocking query pauses
+        // the rc stream until its reply, and on a marginal link that is 3 s of dead sticks every 8 s (the rc
+        // stream itself keeps the SDK alive in flight).
+        if (!sim_ && !nav_.flying() && !drone_.isFlying() && wall.now() - lastKeepAlive > 8.0) {
             lastKeepAlive = wall.now();
             drone_.queryInt("battery?");
         }
@@ -127,11 +154,18 @@ int MissionLoop::run() {
         }
         if (manual_) {
             int r0 = manualRc_[0], r1 = manualRc_[1], r2 = manualRc_[2], r3 = manualRc_[3];
-            if (wall.now() - manualRcT_ > 0.5) r0 = r1 = r2 = r3 = 0;   // dead-man: no fresh sticks -> hover
+            if (wall.now() - manualRcT_ > 0.5) {   // dead-man: no fresh sticks from the page -> hover
+                if ((r0 || r1 || r2 || r3) && drone_.isFlying() && wall.now() - lastStaleLog_ > 2.0) {
+                    LOG_WARN("manual sticks released: no input from the page for %.1fs (operator link?)", wall.now() - manualRcT_);
+                    lastStaleLog_ = wall.now();
+                }
+                r0 = r1 = r2 = r3 = 0;
+            }
             if (drone_.isFlying()) drone_.rc(r0, r1, r2, r3);
         } else if (got || !sim_) {
             nav_.step(obs, st);
         }
+        if (!sim_ && wall.now() - wifiT_ > 1.0) { wifiT_ = wall.now(); wifiDbm_ = readWifiSignalDbm(); }
         if (recording_ && got) record(frame.image, obs, st);
         if (got && ++fpsN && wall.now() - fpsT > 1.0) { fps = fpsN / (wall.now() - fpsT); fpsN = 0; fpsT = wall.now(); }
 
@@ -253,8 +287,11 @@ std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st,
     std::string dn = drone_.name();
     s.drone = dn.c_str();
     if (!obs.tags.empty()) { s.tagId = obs.tags.front().id; s.tagX = obs.tags.front().X; }
+    s.wifi = wifiDbm_;
     if (manual_) {   // show the operator the sticks actually applied (zeros once the dead-man has fired)
         bool stale = wallNow() - manualRcT_ > 0.5;
+        s.rcAge = manualRcT_ > 0 ? wallNow() - manualRcT_ : -1;
+        s.stale = stale;
         for (int i = 0; i < 4; ++i) s.rc[i] = stale ? 0 : manualRc_[i];
     } else {
         RcCommand rc = nav_.lastRc();
