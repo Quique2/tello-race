@@ -26,6 +26,16 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-13 23:36 (pi) first START (mission mode) on the real drone: takeoff refused, clean ABORTED; drone hot
+* Run 23:33:13, drone power-cycled ~20 s after the previous flight (which ended at 71 °C). Battery 85 %.
+* +41.94 `web command: start` -> `preflight OK: battery 84%, video 23.6 fps, height 10 cm` -> `NAV IDLE -> TAKEOFF
+  (start)` -> +42.02 `takeoff` answered `error` -> **`NAV TAKEOFF -> ABORTED (takeoff failed)`**. Nothing else sent.
+  The mission path handled it correctly.
+* Manual retries +47.91 and +52.71: `error` again. Board **78–79 °C**, link -48…-55 dBm, video 21–23 fps.
+  Consistent with the heat pattern (refusals at 66–90 °C in the 17:41–17:46 runs). Powered off ~23:34:30.
+* For the laptop: the preflight could check `temph` (warn or refuse at >= 75 °C, "let it cool") so START
+  explains itself before the drone refuses.
+
 ### 2026-09-13 23:35 (pi) run 23:31:12: land-refused fix verified on the drone; calibration log spam
 * Battery 100 %, board 53 °C. On the ground before takeoff the link was weak (`wifi -61`, fps 9.3); in flight
   -35…-45 dBm, fps 24. Takeoff +20.84 -> `ok` +26.65 (the takeoff false alarm again, `... for 6.9s`).
