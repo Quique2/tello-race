@@ -26,6 +26,18 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-13 23:35 (pi) run 23:31:12: land-refused fix verified on the drone; calibration log spam
+* Battery 100 %, board 53 °C. On the ground before takeoff the link was weak (`wifi -61`, fps 9.3); in flight
+  -35…-45 dBm, fps 24. Takeoff +20.84 -> `ok` +26.65 (the takeoff false alarm again, `... for 6.9s`).
+* **Land-refused fix: works.** Low hover (h 10, tof 30–32); the drone touched down at ~23:32:35 (h 10 -> -30 -> 0,
+  tof 10). The user pressed LAND at +82.19 -> `Tello << error` +82.21 -> `land refused while the telemetry says on
+  the ground -> clearing the flying flag` -> `notice: land refused by the drone: error (it is on the ground)` ->
+  `notice: drone is on the ground: TAKE OFF is available again` (+82.26). No stuck state.
+* **Log spam:** `Ground auto-calibration: camera pitch=11.4 roll=… height(tag)=0.37m ratio(tag/tof)=1.17 (60 samples)`
+  is logged at INFO on every frame while a floor tag is in view: 561 lines in ~40 s. Values stable (pitch 11.4°,
+  roll 1.3–2.2°, tag height 0.36–0.38 m, ratio 1.17). Log only on a meaningful change or at most once per second.
+* Powered off ~23:32:50 (recovery timeouts against the dead drone as usual).
+
 ### 2026-09-13 17:50 (pi) the drone refuses every takeoff (23/23 `error`) with a full battery; board up to 90 °C on the ground
 * Run 17:26:23 (battery 68 %): normal. Takeoff +31.1 ok (takeoff false alarm `... for 20.1s` again), +67.6 `flip f` ->
   `notice: flip refused: the Tello needs more than about 50 % battery` (page-side check, nothing sent), land +115.6
