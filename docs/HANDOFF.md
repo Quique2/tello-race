@@ -26,6 +26,22 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-13 23:45 (pi) correction: takeoff refusals are NOT explained by heat; suspect one battery pack
+* Run 23:39:50 (battery pack swapped, **100 %**): takeoff +11.93 accepted with the board at **72 °C**, no refusal
+  in the whole run. Three flips, each followed by `notice: flip done` and spaced out (`f` +95.37, `r` +104.44,
+  `l` +109.44), land +114.61. Battery 100 -> 68 %, board up to 81 °C.
+* Takeoff outcomes today by board temperature at the attempt:
+  refused at 52–57 °C (17:41 run, 100 %); refused at 66–90 °C (17:42, 23:33, 23:34, 23:38 runs; 84–92 %);
+  accepted at 64–72 °C (17:50 run, 90 %; 23:39 run, 100 %).
+  Neither temperature nor battery percentage separates the cases, so my "heat" reading in the 17:50 and 23:36
+  entries is withdrawn. The change before this success was **a different battery pack**. Candidate: one pack the
+  drone rejects at arming (a weak/unbalanced cell that sags when the motors spin up). Waiting for the user to say
+  which pack was in during the refused runs.
+* The preflight temperature suggestion (23:36 entry) is still harmless but won't fix this. A better preflight
+  notice on `error`: "try another battery".
+* Note: pressing EMERGENCY on the ground (run 23:38:34, +20.46) sends `emergency`; the Tello didn't reply within
+  3 s, `NAV IDLE -> ABORTED (emergency)`; nothing else changed.
+
 ### 2026-09-13 23:36 (pi) first START (mission mode) on the real drone: takeoff refused, clean ABORTED; drone hot
 * Run 23:33:13, drone power-cycled ~20 s after the previous flight (which ended at 71 °C). Battery 85 %.
 * +41.94 `web command: start` -> `preflight OK: battery 84%, video 23.6 fps, height 10 cm` -> `NAV IDLE -> TAKEOFF
