@@ -24,6 +24,7 @@ bind('bTakeoff',()=>armed('bTakeoff','click again to TAKE OFF',()=>send('takeoff
 for(const [id,d] of [['bFlipF','f'],['bFlipB','b'],['bFlipL','l'],['bFlipR','r']])bind(id,()=>armed(id,'click again: FLIP',()=>send('flip',d)));
 bind('mMission',()=>send('mode','mission'));bind('mManual',()=>{if(send('mode','manual'))msg('manual mode: TAKE OFF, then keys W/S A/D R/F Q/E or the pads');});
 $('resume').onchange=e=>send('tag',e.target.value);
+$('mirror').onchange=e=>send('mirror',e.target.value);
 $('spd').oninput=e=>{$('spdv').textContent=e.target.value;};
 /* manual sticks: keyboard + on-screen pads, sent at 10 Hz while active, one zero when released */
 const key={w:0,s:0,a:0,d:0,r:0,f:0,q:0,e:0};let padL={x:0,y:0},padR={x:0,y:0},lastSent='';
@@ -62,6 +63,7 @@ function connect(){const proto=location.protocol==='https:'?'wss://':'ws://';ws=
   $('drone').textContent=m.drone;const b=$('bat');b.textContent=m.telemetry?(m.bat+' %'):'no telemetry';b.classList.toggle('low',m.telemetry&&m.bat<30);
   $('h').textContent=m.telemetry?(m.tof+' cm'):'-';$('temp').textContent=m.telemetry?(m.templ+'-'+m.temph+' C'):'-';
   $('fps').textContent=m.fps.toFixed(1)+' fps';$('tag').textContent=m.tag>0?('ID'+m.tag+' @ '+m.tagX.toFixed(2)+' m'):'-';
+  if(m.mirror!==undefined&&document.activeElement!==$('mirror'))$('mirror').value=m.mirror;
   if(m.noticeId!==undefined){if(lastNoticeId<0)lastNoticeId=m.noticeId||0;else if(m.noticeId!==lastNoticeId){lastNoticeId=m.noticeId;if(m.notice)msg(m.notice);}}
   const mf=(m.mode==='manual'&&m.flying),st=!!(m.stale&&mf);const L=$('link');
   L.textContent=(m.wifi?m.wifi+' dBm':'-')+(mf?(st?' / STICKS RELEASED':' / input '+(m.rcAge>=0?m.rcAge.toFixed(1)+'s':'none')):'');L.classList.toggle('low',st);

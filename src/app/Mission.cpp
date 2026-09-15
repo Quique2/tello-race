@@ -39,6 +39,14 @@ static int readWifiSignalDbm(const std::string& want) {   // want = interface na
         }
     }
     fclose(f);
+    if (best == 0 && want != "auto" && want.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-.") == std::string::npos) {
+        // USB adapters (rtw88) do not appear in /proc/net/wireless: ask iw once a second instead
+        std::string cmd = "/usr/sbin/iw dev " + want + " link 2>/dev/null";
+        if (FILE* p = popen(cmd.c_str(), "r")) {
+            while (fgets(line, sizeof(line), p)) { int lv; if (sscanf(line, " signal: %d dBm", &lv) == 1) best = lv; }
+            pclose(p);
+        }
+    }
     return best;
 #endif
 }
@@ -92,6 +100,12 @@ private:
     double manualRcT_ = 0;
     double lastStaleLog_ = 0;
     int flipCode_ = 2;     // cv::flip code for live frames; 2 = no flip (camera.flip)
+    std::string flipName_ = "none";
+    void setFlip(const std::string& f) {   // none | horizontal | vertical | both
+        flipCode_ = f == "horizontal" ? 1 : f == "vertical" ? 0 : f == "both" ? -1 : 2;
+        flipName_ = flipCode_ == 2 ? "none" : f;
+    }
+    double percMs_ = 0, iterMs_ = 0, tagMsAcc_ = 0, lineMsAcc_ = 0; int perfN_ = 0; double lastSlowLog_ = 0;
     std::string notice_;   // last one-line message for the page (shown once per id)
     int noticeId_ = 0;
     bool prevFlying_ = false;
@@ -109,9 +123,8 @@ int MissionLoop::run() {
     if (!opt_.headless) cv::namedWindow(win, cv::WINDOW_AUTOSIZE);
     if (!sim_) {
         wifiIfname_ = cfg_.getString("tello.wifi_ifname", "auto");
-        std::string f = cfg_.getString("camera.flip", "none");
-        flipCode_ = f == "horizontal" ? 1 : f == "vertical" ? 0 : f == "both" ? -1 : 2;
-        if (flipCode_ != 2) LOG_INFO("camera.flip = %s: live frames are flipped before perception (mirror mount)", f.c_str());
+        setFlip(cfg_.getString("camera.flip", "none"));
+        if (flipCode_ != 2) LOG_INFO("camera.flip = %s: live frames are flipped before perception (mirror mount)", flipName_.c_str());
     }
     if (opt_.record) startRecording();
     webOn_ = web_ && cfg_.getBool("web.enabled", false);
@@ -139,6 +152,7 @@ int MissionLoop::run() {
         if (quitting_ && !nav_.flying()) break;
         WebCommand wc;
         while (webOn_ && web_->popCommand(wc)) applyWebCommand(wc);
+        double tIter0 = wall.now();
         bool got = src_.latest(frame, seq_, 0.25);
         if (got && flipCode_ != 2) cv::flip(frame.image, frame.image, flipCode_);   // mirror mount: un-mirror before perception
         if (got) { seq_ = frame.seq; haveFrame = true; lastFrameWall = wall.now(); videoRecoveries_ = 0; }
@@ -155,7 +169,7 @@ int MissionLoop::run() {
         Observation obs;
         double hx = 0, hy = 0;
         perception_.setLineHint(nav_.lineHint(hx, hy), hx, hy);
-        if (got) obs = perception_.process(frame.image, st, frame.stamp, frame.seq);
+        if (got) { double tp = wall.now(); obs = perception_.process(frame.image, st, frame.stamp, frame.seq); percMs_ += (wall.now() - tp) * 1000; iterMs_ += (wall.now() - tIter0) * 1000; tagMsAcc_ += obs.tagMs; lineMsAcc_ += obs.lineMs; ++perfN_; }
         else { obs.stamp = clock_.now(); obs.blindZoneM = perception_.projector().blindZoneX(); }
         // Keep SDK mode alive while idle on the ground. Never while airborne in ANY mode: a blocking query pauses
         // the rc stream until its reply, and on a marginal link that is 3 s of dead sticks every 8 s (the rc
@@ -188,7 +202,15 @@ int MissionLoop::run() {
           if (prevFlying_ && !fl) notice("drone is on the ground: TAKE OFF is available again");
           prevFlying_ = fl; }
         if (recording_ && got) record(frame.image, obs, st);
-        if (got && ++fpsN && wall.now() - fpsT > 1.0) { fps = fpsN / (wall.now() - fpsT); fpsN = 0; fpsT = wall.now(); }
+        if (got && ++fpsN && wall.now() - fpsT > 1.0) {
+            fps = fpsN / (wall.now() - fpsT); fpsN = 0; fpsT = wall.now();
+            if (!sim_ && fps < 10 && src_.fps() > 12 && perfN_ > 0 && wall.now() - lastSlowLog_ > 5.0) {   // the camera delivers, the loop does not keep up
+                LOG_WARN("slow loop: %.1f fps processed of %.1f delivered; perception %.0f ms/frame (tags %.0f, line %.0f), wait+perception %.0f ms/frame",
+                         fps, src_.fps(), percMs_ / perfN_, tagMsAcc_ / perfN_, lineMsAcc_ / perfN_, iterMs_ / perfN_);
+                lastSlowLog_ = wall.now();
+            }
+            percMs_ = iterMs_ = tagMsAcc_ = lineMsAcc_ = 0; perfN_ = 0;
+        }
 
         if (webOn_ && wall.now() - lastStateT > 0.1) { web_->publishState(stateJson(obs, st, fps)); lastStateT = wall.now(); }
         bool dump = opt_.dumpEvery > 0 && got && (seq_ % opt_.dumpEvery == 0);
@@ -245,6 +267,10 @@ void MissionLoop::applyWebCommand(const WebCommand& c) {
             manualRc_[2] = std::max(-100, std::min(100, d)); manualRc_[3] = std::max(-100, std::min(100, e));
             manualRcT_ = wallNow();
         }
+    }
+    else if (c.cmd == "mirror") {   // live choice of the un-mirroring flip for a mirror mount
+        if (sim_) notice("mirror flip applies to the real camera only");
+        else { setFlip(c.arg); notice("camera mirror flip: " + flipName_ + " (make it permanent with camera.flip in the config)"); }
     }
     else if (c.cmd == "flip") {   // SDK "flip f|b|l|r": the Tello does the acrobatics itself
         std::string d = c.arg.empty() ? "" : c.arg.substr(0, 1);
@@ -329,6 +355,7 @@ std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st,
     if (!obs.tags.empty()) { s.tagId = obs.tags.front().id; s.tagX = obs.tags.front().X; }
     s.wifi = wifiDbm_;
     s.notice = notice_; s.noticeId = noticeId_;
+    s.mirror = flipName_;
     if (manual_) {   // show the operator the sticks actually applied (zeros once the dead-man has fired)
         bool stale = wallNow() - manualRcT_ > 0.5;
         s.rcAge = manualRcT_ > 0 ? wallNow() - manualRcT_ : -1;

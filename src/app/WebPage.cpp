@@ -48,6 +48,7 @@ static const char* kPageB = R"HTML(<header><h1>tello_race</h1><span><span class=
  <div class="panel"><h2>Mission</h2><div class="phase" id="phase">IDLE</div>
   <div class="grid"><div><span>segments</span> <b id="seg">0</b></div><div><span>time</span> <b id="t">0.0 s</b></div>
   <div><span>tag</span> <b id="tag">-</b></div><div><span>rc</span> <b id="rc">-</b></div></div></div>
+<p class="kv op">mirror flip: <select id="mirror"><option value="none">none</option><option value="vertical">vertical</option><option value="horizontal">horizontal</option><option value="both">both</option></select> <span class="hint">(mirror mount: pick the one that makes text readable)</span></p>
  <div class="panel op mission-only"><h2>Mission controls</h2><div class="btns">
   <button class="start" id="bStart">START (take off)</button><button class="land" id="bLand">LAND</button>
   <button id="bCam">CAMERA front/belly</button><button id="bRec">RECORD</button>

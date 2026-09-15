@@ -89,6 +89,7 @@ struct StateSnapshot {
     bool stale = false;    // dead-man has released the sticks
     int wifi = 0;          // drone link signal, dBm (0 = unknown)
     std::string notice;    // one-line message for the page, shown once per noticeId
+    std::string mirror = "none";   // camera.flip in effect
     int noticeId = 0;
     std::vector<std::string> events;
 };

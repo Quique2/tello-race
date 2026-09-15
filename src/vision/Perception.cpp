@@ -68,7 +68,7 @@ void Perception::updateCalib(const TagDetection& d, const TelloState& st) {
     calib_.rollDeg = mu::median(std::vector<double>(rollS_.begin(), rollS_.end()));
     calib_.heightM = mu::median(std::vector<double>(heightS_.begin(), heightS_.end()));
     calib_.heightRatio = ratioS_.empty() ? 0 : mu::median(std::vector<double>(ratioS_.begin(), ratioS_.end()));
-    if (autoCalib_ && calib_.samples >= autoCalibMinSamples_ && calib_.pitchDeg > -5 && calib_.pitchDeg < 85 &&   // up to 85: a mirror mount aims the front camera 60-80 deg down
+    if (autoCalib_ && calib_.samples >= autoCalibMinSamples_ && calib_.pitchDeg > -5 && calib_.pitchDeg < 89 &&   // a mirror mount can aim the front camera nearly straight down
         std::fabs(calib_.rollDeg) < 15) {
         bool first = !calib_.applied;
         proj_.setCameraMount(calib_.pitchDeg, calib_.rollDeg);
