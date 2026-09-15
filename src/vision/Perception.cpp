@@ -73,9 +73,15 @@ void Perception::updateCalib(const TagDetection& d, const TelloState& st) {
         bool first = !calib_.applied;
         proj_.setCameraMount(calib_.pitchDeg, calib_.rollDeg);
         calib_.applied = true;
-        if (first || calib_.samples % 30 == 0)
+        // The sample window is capped, so "samples % 30 == 0" held on every frame once it was full (14 lines/s):
+        // log on the first application and then at most every 2 s.
+        static double lastCalibLog = 0;
+        double nowS = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (first || nowS - lastCalibLog > 2.0) {
+            lastCalibLog = nowS;
             LOG_INFO("Ground auto-calibration: camera pitch=%.1f roll=%.1f deg, height(tag)=%.2fm ratio(tag/tof)=%.2f (%d samples)",
                      calib_.pitchDeg, calib_.rollDeg, calib_.heightM, calib_.heightRatio, calib_.samples);
+        }
     }
 }
 
