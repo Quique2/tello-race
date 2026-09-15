@@ -26,6 +26,22 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-15 00:05 (pi) first power-on through wlan1 (Alfa): join OK, page dBm follows wlan1, three flights
+* Run 2026-09-14 23:57:35 (battery 92 %): 23:57:31.5 `TELLO-FE18DB visible` on wlan1 -> **23:57:35.8 joined**
+  (4.3 s; ~0.5 s on wlan0), 192.168.10.2/24, default route **stays on eth0** (wlan0 home route metric 600 as
+  backup), drone answers, tello_race connected at once. dmesg: clean auth/assoc, no rtw88 errors.
+* dBm source: once associated, `/proc/net/wireless` lists wlan1 and the page `wifi` field matches `iw dev wlan1
+  link` (-46/-50 at the first sample). Link: channel 5 (2432 MHz), tx bitrate 54 Mbit/s.
+* Flights (user, manual): +24.5 -> +106.0 and +113.9 -> +132.0 normal. `iw` signal on the ground -32…-52 dBm (36 s),
+  in the air -32…-54 dBm (91 s); video under 20 KiB/s in 1 s out of 127. wlan0 on 09-12/13 indoors was -35…-57.
+  Distances not known, so no fair comparison yet; the 1 m / 5 m / wall test is still to do.
+* **Missed beacons on wlan1:** 118 at the first check -> 467 about 2.5 min later (~2/s). No disconnects, no video
+  gaps, no driver errors. Watch it if the link ever drops.
+* Third flight +151.6 -> at 00:00:22 `h 40, tof 298` (downward sensor suddenly ~3 m: over an edge/drop?) -> 00:00:24
+  `h -80, tof 10`, no `land` sent -> +167.58 telemetry clear ("landed by itself"). Link -46…-58 dBm, video steady,
+  no stick gaps: not a radio problem. Asked the user what happened. Battery 71 %, board 75 °C. Powered off 00:00:36.
+* The takeoff false alarm (`no stick input ... for 9.3s` right after takeoff) is still there.
+
 ### 2026-09-14 23:50 (pi) drone link moved to the Alfa AWUS036ACS (wlan1); wlan0 stays on the home Wi-Fi
 * Adapter: `0bda:0811` Realtek 8812AU/8821AU, driver `rtw88_8821au`, firmware 42.4.0, USB 2 (bus 003, 480M),
   MAC 00:c0:ca:b9:af:b4, `wlan1`. No driver errors in dmesg. A scan on wlan1 lists 8 networks (2.4 and 5 GHz).
