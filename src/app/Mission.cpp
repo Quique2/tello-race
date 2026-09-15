@@ -288,6 +288,7 @@ void MissionLoop::applyWebCommand(const WebCommand& c) {
         if (!manual_) notice("TAKE OFF works in MANUAL mode; in mission mode press START");
         else if (drone_.isFlying()) notice("take-off ignored: the drone reports it is already flying");
         else if (!drone_.takeoff()) { LOG_WARN("manual takeoff refused: %s", drone_.lastReply.c_str()); notice("take-off refused by the drone: " + drone_.lastReply); }
+        else manualRcT_ = wallNow();   // takeoff blocks the loop for ~7 s: do not count that as a stick-input gap
     }
     else if (c.cmd == "start") { if (!manual_) handleKey('t'); else LOG_WARN("START ignored in manual mode: switch to mission mode first"); }
     else if (c.cmd == "land") {

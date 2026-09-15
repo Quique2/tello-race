@@ -26,6 +26,27 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-15 01:10 (laptop) mirror mount: flip = vertical, angle limit from the simulator, live selector
+* The user mounted the mirror. From his screenshot the image is flipped **vertically only** (keyboard rows reversed
+  top-to-bottom, letters in normal left-right order), so AprilTags cannot decode until un-mirrored. Set on the Pi:
+  `--set camera.flip=vertical` appended to GROUND_STATION_ARGS in ~/.config/drone-watch.env (drone-watch restarted).
+  The page now has a "mirror flip" selector (none/vertical/horizontal/both, command `mirror`) that applies live, for
+  checking without restarts; the state JSON carries `mirror`.
+* Camera angle matters more than the flip. Simulator with renderer and perception pitch aligned
+  (`sim.cam_pitch_true_deg` = `camera.pitch_deg`), example course: 12 deg 4/4 in 46.8 s; **30 deg 4/4 in 40.5 s**;
+  **45 deg: does not finish** (line lookahead lost: the view starts too close and the pursuit point is out of frame).
+  So the mirror must leave the camera looking about 25-35 deg below the horizon, not straight down. The user's
+  current view looks nearly vertical (keyboard seen from above) and would not fly the course; it is fine for the
+  belly-style tag/colour view he wants, but not for the race. Auto-calibration now accepts pitch up to 89 deg and
+  reports what the mirror actually gives (needs a floor tag in view, `calib n=` in the HUD).
+* Other changes: the page dBm falls back to `iw dev <if> link` when the interface is not in /proc/net/wireless;
+  a slow-loop diagnostic logs per-stage costs when the loop processes < 10 fps while the camera delivers more (the
+  screenshot showed 4.8 fps processed at 24 delivered, suspect the backlit keyboard: hundreds of bright quads for
+  the tag detector); take-off no longer trips the "no stick input" alarm (stick clock reset after the blocking
+  take-off). Pi rebuilt at each step.
+* For the Pi session: next power-on, confirm text reads correctly with the vertical flip, put a printed tag on the
+  floor in view and report `calib n=` and the pitch it measures; if the slow-loop warning appears, report it.
+
 ### 2026-09-15 00:05 (pi) first power-on through wlan1 (Alfa): join OK, page dBm follows wlan1, three flights
 * Run 2026-09-14 23:57:35 (battery 92 %): 23:57:31.5 `TELLO-FE18DB visible` on wlan1 -> **23:57:35.8 joined**
   (4.3 s; ~0.5 s on wlan0), 192.168.10.2/24, default route **stays on eth0** (wlan0 home route metric 600 as
