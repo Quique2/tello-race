@@ -26,6 +26,26 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-15 01:20 (pi) ce4fede on the drone via wlan1: takeoff false alarm gone, flip selector works; slow-loop warnings fire after blocking commands
+* Joins through wlan1 since the first one: 00:01:16 -> 00:01:18 (2.1 s), 00:38:39 -> 00:38:41 (2.1 s), 01:11:47 ->
+  01:11:51 (4.2 s). Default route always stayed on eth0. Strongest reading so far -24…-26 dBm (drone right next
+  to the adapter, 00:39). After a landing the signal often drops to about -62 dBm on the floor, then recovers.
+* Run 00:01:18: flight +15.1 -> land +45.5 (`ok` +50.3), in the air -46…-58 dBm, video ~150 KiB/s, `rcAge` <= 0.4 s.
+* Run 01:11:51 (build 01:04:09 = ce4fede, options `--set tello.wifi_ifname=wlan1 --set camera.flip=vertical`,
+  battery 68 %, board 51 °C): `camera.flip = vertical: live frames are flipped before perception (mirror mount)`.
+  - Takeoff +17.73, land +72.77 -> notice. **No `no stick input` warning after takeoff: ce4fede fixes it.**
+  - `mirror horizontal` +93.17 / `mirror vertical` +95.20 from the page, each with its notice.
+  - **Page `wifi` vs `iw dev wlan1 link`:** 127 paired seconds, mean difference 0.3 dB (typical |diff| 3.7 dB from
+    sampling at different moments). The readout follows the adapter.
+  - **`slow loop` warnings:** `3.4 fps processed of 23.6 delivered; perception 18 ms/frame (tags 8, line 10),
+    wait+perception 36 ms/frame` at +24.18, `2.2 of 24.4` at +77.39, `5.9 of 13.8` at +87.93, `1.9 of 43.9` at +102.42.
+    +24.18 comes right after the 6.4 s blocking takeoff and +77.39 right after the 4.6 s blocking land; the others
+    are around the landing and the mirror toggles. Status `fps` median 23.8 over the run, Pi load ~1.0, perception
+    18–23 ms: these look like windows that include time blocked on a drone command, not slow perception. Exclude
+    blocked time from the window, or skip the check right after takeoff/land/flip.
+  - After the power-off (~01:14:10) `streamon -> 27 [not acknowledged]` still prints a stale reply (a battery
+    value): the lastReply log bug from the 17:25 entry is still present.
+
 ### 2026-09-15 01:10 (laptop) mirror mount: flip = vertical, angle limit from the simulator, live selector
 * The user mounted the mirror. From his screenshot the image is flipped **vertically only** (keyboard rows reversed
   top-to-bottom, letters in normal left-right order), so AprilTags cannot decode until un-mirrored. Set on the Pi:
