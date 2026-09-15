@@ -10,7 +10,7 @@ set -u
 REPO=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
 SSID=TELLO-FE18DB
 PROFILE=tello
-IFACE=wlan0
+IFACE=${DRONE_IFACE:-wlan0}   # radio that joins the drone; DRONE_IFACE=wlan1 in ~/.config/drone-watch.env for a USB adapter
 DRONE_IP=192.168.10.1
 PORT=8080
 INTERVAL=5
@@ -75,7 +75,7 @@ ensure_profile() {
 until nmcli -t general status >/dev/null 2>&1; do sleep 2; done
 nmcli -t -f NAME con show 2>/dev/null | grep -Fxq "$PROFILE" || { log "profile $PROFILE missing (see docs/HANDOFF.md)"; exit 1; }
 ensure_profile
-log "started: waiting for $SSID (repo $REPO)${GS_ARGS[*]:+, tello_race options: ${GS_ARGS[*]}}"
+log "started: waiting for $SSID on $IFACE (repo $REPO)${GS_ARGS[*]:+, tello_race options: ${GS_ARGS[*]}}"
 
 station=0         # 1 while we believe a ground station started by us is running
 unreachable=0     # seconds the drone has not answered while joined

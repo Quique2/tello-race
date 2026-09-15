@@ -26,6 +26,28 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-14 23:50 (pi) drone link moved to the Alfa AWUS036ACS (wlan1); wlan0 stays on the home Wi-Fi
+* Adapter: `0bda:0811` Realtek 8812AU/8821AU, driver `rtw88_8821au`, firmware 42.4.0, USB 2 (bus 003, 480M),
+  MAC 00:c0:ca:b9:af:b4, `wlan1`. No driver errors in dmesg. A scan on wlan1 lists 8 networks (2.4 and 5 GHz).
+* Regulatory: `iw reg get` global **MX** (2.4 GHz: 20 dBm); the on-board radio's phy#0 reports its own `country 99`.
+  `iw dev wlan1 info`: **txpower 24.00 dBm** (the driver's figure; the regulatory limit on 2.4 GHz is 20 dBm).
+* Changes:
+  - `nmcli con modify tello connection.interface-name wlan1` (profile otherwise unchanged: open SSID,
+    `ipv4.never-default yes`, `ipv6.method disabled`, `autoconnect no`).
+  - `drone_watch.sh` and `drone_wifi.sh`: `IFACE=${DRONE_IFACE:-wlan0}`, so the radio comes from the environment.
+  - `~/.config/drone-watch.env` on the Pi: `DRONE_IFACE=wlan1` and
+    `GROUND_STATION_ARGS="--log-level debug --set tello.wifi_ifname=wlan1"`. drone-watch restarted:
+    `started: waiting for TELLO-FE18DB on wlan1 ... tello_race options: --log-level debug --set tello.wifi_ifname=wlan1`.
+  - Build 0a3feae (23:42:18) contains `tello.wifi_ifname`.
+* To check on the first join: `/proc/net/wireless` currently lists only wlan0 (wlan1 not associated). If wlan1 does
+  not appear there once joined, the page dBm readout (read from /proc/net/wireless) would be empty; `iw dev wlan1
+  link` is logged per second as a second source.
+* Fallback if the adapter misbehaves: `sudo nmcli con modify tello connection.interface-name wlan0` and
+  `DRONE_IFACE=wlan0` plus `--set tello.wifi_ifname=wlan0` (or remove it) in `~/.config/drone-watch.env`, then
+  `systemctl --user restart drone-watch`.
+* Pending: power-on test (scan, join, default route on eth0, page up) and dBm at 1 m, 5 m and through a wall,
+  against wlan0 on 2026-09-12/13 (-35…-57 dBm indoors).
+
 ### 2026-09-13 23:45 (pi) correction: takeoff refusals are NOT explained by heat; suspect one battery pack
 * Run 23:39:50 (battery pack swapped, **100 %**): takeoff +11.93 accepted with the board at **72 °C**, no refusal
   in the whole run. Three flips, each followed by `notice: flip done` and spaced out (`f` +95.37, `r` +104.44,

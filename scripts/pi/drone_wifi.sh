@@ -5,7 +5,7 @@
 set -u
 PROFILE=tello
 DRONE_IP=192.168.10.1
-IFACE=wlan0
+IFACE=${DRONE_IFACE:-wlan0}
 
 default_dev() { ip route show default | awk '{for(i=1;i<NF;i++) if($i=="dev"){print $(i+1); exit}}'; }
 

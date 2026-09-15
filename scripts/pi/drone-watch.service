@@ -4,7 +4,7 @@ Description=Race day: join TELLO-FE18DB when the drone is powered on and start t
 # Linger is enabled for quiquepi, so this runs at boot without a desktop login.
 
 [Service]
-# optional: GROUND_STATION_ARGS="--log-level debug"
+# optional: GROUND_STATION_ARGS="--log-level debug --set tello.wifi_ifname=wlan1", DRONE_IFACE=wlan1
 EnvironmentFile=-%h/.config/drone-watch.env
 ExecStart=%h/tello-race/scripts/pi/drone_watch.sh
 Restart=always
