@@ -21,22 +21,25 @@
 namespace {
 
 // Signal level of the wireless interface that carries the drone link (Linux /proc/net/wireless), dBm; 0 if unknown.
-static int readWifiSignalDbm() {
+static int readWifiSignalDbm(const std::string& want) {   // want = interface name, or "auto" = strongest live one
 #ifdef _WIN32
     return 0;
 #else
     FILE* f = fopen("/proc/net/wireless", "r");
     if (!f) return 0;
-    char line[256]; int result = 0;
+    // The drone may be on the built-in radio (wlan0) or on a USB adapter (wlan1): report the interface with the
+    // strongest live signal; an idle interface reads 0.
+    char line[256]; int best = 0;
     while (fgets(line, sizeof(line), f)) {
         char ifname[32]; unsigned status; double link, level;
         if (sscanf(line, " %31[^:]: %x %lf %lf", ifname, &status, &link, &level) == 4) {
-            result = (int)level;
-            if (strcmp(ifname, "wlan0") == 0) break;
+            int lv = (int)level;
+            if (want != "auto") { if (want == ifname) { best = lv; break; } continue; }
+            if (lv != 0 && (best == 0 || lv > best)) best = lv;
         }
     }
     fclose(f);
-    return result;
+    return best;
 #endif
 }
 
@@ -94,6 +97,7 @@ private:
     bool prevFlying_ = false;
     void notice(const std::string& t) { notice_ = t; ++noticeId_; LOG_INFO("notice: %s", t.c_str()); }
     int wifiDbm_ = 0;      // drone link as seen by the ground station, dBm (0 = unknown)
+    std::string wifiIfname_ = "auto";   // tello.wifi_ifname
     double wifiT_ = 0;
 };
 
@@ -104,6 +108,7 @@ int MissionLoop::run() {
     const std::string win = "tello_race";
     if (!opt_.headless) cv::namedWindow(win, cv::WINDOW_AUTOSIZE);
     if (!sim_) {
+        wifiIfname_ = cfg_.getString("tello.wifi_ifname", "auto");
         std::string f = cfg_.getString("camera.flip", "none");
         flipCode_ = f == "horizontal" ? 1 : f == "vertical" ? 0 : f == "both" ? -1 : 2;
         if (flipCode_ != 2) LOG_INFO("camera.flip = %s: live frames are flipped before perception (mirror mount)", f.c_str());
@@ -178,7 +183,7 @@ int MissionLoop::run() {
         } else if (got || !sim_) {
             nav_.step(obs, st);
         }
-        if (!sim_ && wall.now() - wifiT_ > 1.0) { wifiT_ = wall.now(); wifiDbm_ = readWifiSignalDbm(); }
+        if (!sim_ && wall.now() - wifiT_ > 1.0) { wifiT_ = wall.now(); wifiDbm_ = readWifiSignalDbm(wifiIfname_); }
         { bool fl = drone_.isFlying();
           if (prevFlying_ && !fl) notice("drone is on the ground: TAKE OFF is available again");
           prevFlying_ = fl; }
