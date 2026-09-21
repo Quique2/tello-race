@@ -33,6 +33,7 @@ void SimParams::load(const Config& c) {
     finishRadiusM = c.getDouble("sim.finish_radius_m", finishRadiusM);
     idleLimitS = c.getDouble("sim.idle_limit_s", idleLimitS);
     maxTimeS = c.getDouble("sim.max_time_s", maxTimeS);
+    tracePoseS = c.getDouble("sim.trace_pose_s", tracePoseS);
 }
 
 Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackKind, const TagDetector& tagRenderer)
@@ -49,6 +50,17 @@ Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackK
     style_.textureSeed = seed;
     track_ = (trackKind == "example") ? TrackBuilder::example() : TrackBuilder::random(seed, cfg.getDouble("sim.world_size_m", 9.0));
     world_ = TrackBuilder::render(track_, style_, tagRenderer);
+    if (p_.tracePoseS > 0)
+        for (size_t i = 0; i < track_.segments.size(); ++i) {
+            const auto& sp = track_.segments[i].pts;
+            if (sp.size() < 2) continue;
+            double a0 = mu::rad2deg(std::atan2(sp[1].y - sp[0].y, sp[1].x - sp[0].x));
+            double a1 = mu::rad2deg(std::atan2(sp.back().y - sp[sp.size() - 2].y, sp.back().x - sp[sp.size() - 2].x));
+            LOG_INFO("SIM segment %zu: start (%.2f, %.2f) dir %.0f -> end (%.2f, %.2f) dir %.0f, tag ID%d at (%.2f, %.2f)", i + 1,
+                     sp.front().x, sp.front().y, a0, sp.back().x, sp.back().y, a1,
+                     i < track_.tags.size() ? track_.tags[i].id : 0, i < track_.tags.size() ? track_.tags[i].x : 0.0,
+                     i < track_.tags.size() ? track_.tags[i].y : 0.0);
+        }
     Intrinsics K;
     K.width = cfg.getInt("camera.width", 960);
     K.height = cfg.getInt("camera.height", 720);
@@ -247,6 +259,13 @@ TelloState Simulator::state() const {
 
 void Simulator::checkProgress() {
     if (!flying_) return;
+    if (p_.tracePoseS > 0 && t_ - lastTraceT_ >= p_.tracePoseS) {
+        lastTraceT_ = t_;
+        const TrackTag* tg = nextTag_ < (int)track_.tags.size() ? &track_.tags[nextTag_] : nullptr;
+        LOG_INFO("SIM pose t=%.1f x=%.2f y=%.2f z=%.2f psi=%.0f  next tag ID%d at (%.2f, %.2f) dist=%.2f",
+                 t_ - takeoffT_, x_, y_, z_, psi_, tg ? tg->id : 0, tg ? tg->x : 0.0, tg ? tg->y : 0.0,
+                 tg ? std::hypot(x_ - tg->x, y_ - tg->y) : 0.0);
+    }
     double half = track_.worldSize / 2 - p_.boundsMargin;
     if (std::fabs(x_) > half || std::fabs(y_) > half) {
         res_.crashed = true;

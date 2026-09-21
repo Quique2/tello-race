@@ -68,7 +68,7 @@ public:
 private:
     void buildMask(const cv::Mat& bgr, const GroundProjector& proj, const std::vector<std::vector<cv::Point2f>>& polys);
     bool scanBands(const GroundProjector& proj, const LineObservation* prev, const cv::Point2d* hint, LineObservation& obs);
-    bool scanComponents(const GroundProjector& proj, LineObservation& obs, const cv::Point2d& expect);
+    bool scanComponents(const GroundProjector& proj, LineObservation& obs, const cv::Point2d& expect, bool haveExpect = false);
     void finalize(LineObservation& obs) const;
     bool lineContinuesBeyond(const GroundProjector& proj, const std::vector<LinePoint>& chain) const;
 

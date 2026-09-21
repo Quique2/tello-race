@@ -26,10 +26,12 @@ struct NavParams {
     // tag handling
     int confirmFrames = 2;
     double approachDistM = 1.4, settleS = 0.8, settleMaxS = 2.5, gapM = 0.8, lineEndAssocM = 1.0, stopOvershootM = 0.15;
+    double approachBackoffM = 0.5;   // a tag found closer than this (under the drone, from altitude) is measured after backing off
     double curvedApproachDeg = 15, tagEndAssocM = 0.6, acquireMaxOffM = 0.75;
     bool backAfterTurn = true, forwardFastPath = false;
     int goSpeed = 60;
     bool goYLeft = true, ignoreVisited = true;
+    double velScale = 0.01, vgySign = -1;   // telemetry vgx/vgy -> m/s, and the sign that makes +vgy = left (CALIBRATE)
     std::string turnMode = "sdk";
     double rcTurnRate = 50, rcTurnTolDeg = 4, rcTurnK = 1.5;
     // acquire
@@ -133,6 +135,8 @@ private:
     std::vector<std::pair<int, std::pair<double, double>>> lastTagIds_;
 
     double approachStart_ = 0;
+    int lastTurnTag_ = 0;
+    double lastManeuverT_ = -1e9;   // tag of the last maneuver: while it stays in view it anchors the expected next start
     std::vector<double> apX_, apY_, apT_;
     double maneuverX_ = 0, maneuverY_ = 0;
     bool turning_ = false;
@@ -140,6 +144,12 @@ private:
     double turnStart_ = 0, turnStableSince_ = -1;
 
     double expectX_ = 0.8, expectY_ = 0, acqBackM_ = 0;
+    // last maneuver tag in the current body frame: dead-reckoned from yaw + telemetry velocity, re-synced when seen
+    bool anchorValid_ = false;
+    double anchorX_ = 0, anchorY_ = 0, anchorT_ = 0;
+    int anchorYaw_ = 0;
+    void setAnchor(double X, double Y, const TelloState& st);
+    void updateAnchor(const TelloState& st);
     bool acqFromManeuver_ = false;
     int acqAbsYaw_ = 0, backwardFrames_ = 0;
     int gapYaw0_ = 0;

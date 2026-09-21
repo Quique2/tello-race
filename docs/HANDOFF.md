@@ -26,6 +26,33 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-20 19:30 (laptop) altitude navigator: 1.5 m with the 67 deg mirror view now flies random courses (19/20)
+* Decision from the user: the belly camera is not used inside a run (front/belly switch takes 5-8 s), and the net is
+  believed higher than 2.5 m, so the race plan is the mirror at ~67 deg with the drone at **1.5 m**
+  (`mission.altitude_cm=150`, `camera.pitch_deg=67`; the sim needs `sim.cam_pitch_true_deg=67` too).
+* Root cause of most altitude failures was an old bug in Mission.cpp: `setLineHint(nav.lineHint(hx,hy), hx, hy)`
+  copied hx/hy before lineHint() wrote them (argument evaluation order), so the detector always got a (0,0) hint
+  and locked onto the tail of the finished segment under the drone. Fixed. Also: the tag position after a tag
+  maneuver is now dead-reckoned in the body frame (yaw + telemetry `vgx`/`vgy` + back steps, re-synced when the
+  tag is in view) instead of "fixed behind the drone" (which also had the wrong sign after the back step); a
+  short line running over the tag is rejected as the old tail; the tag just turned at cannot count as a
+  "revisit" for 15 s. (Tried and reverted: taking the end-of-line direction from the component fallback when
+  the tag is reached from the side; it cost 4 courses out of 20.) Nothing changed for the 50 cm configuration's outcomes: stock random 300-319 **20/20**
+  (49.6 s mean), example 4/4 in 46.9 s.
+* Results (random courses, seeds 300-319): **1.5 m / 67 deg: 19/20**, mean ~60 s (was 4/10 at the start of the
+  day); 2.0 m / 67 deg: 5/10 (still fails: the turn at the tag is judged from a line seen 2 m away). Residual
+  1.5 m failure (seed 319): two antiparallel segments 0.7 m apart both in the wide view; FOLLOW hops onto the
+  neighbour. Example course at 1.5 m: 4/4 in ~55 s.
+* **Two new calibration items for the real drone** (README step 5): `tello.vel_scale` (telemetry speed units to
+  m/s, sim = cm/s -> 0.01) and `tello.vgy_sign` (which sign of `vgy` is LEFT). Read `v=(vgx,vgy,vgz)` in the HUD
+  while pushing the stick slowly forward, then left, in MANUAL mode. Wrong values only degrade the acquisition
+  after a tag (the anchor drifts), they cannot send the drone anywhere by themselves.
+* Debug aids: `--set sim.trace_pose_s=2` logs the true pose and the segment geometry; `--log-level debug` shows
+  the gate decisions (`gate: accept rule N` / `reject`) and the band-scan start (`bands:`).
+* For the Pi session: pull, rebuild (`cmake --build --preset linux-release`), and set in GROUND_STATION_ARGS
+  `--set mission.altitude_cm=150 --set camera.pitch_deg=67` (keep `camera.flip=vertical`). Report the `calib`
+  pitch the mirror actually gives with a floor tag in view; if it is not 60-72 deg, tell me before any run.
+
 ### 2026-09-15 01:20 (pi) ce4fede on the drone via wlan1: takeoff false alarm gone, flip selector works; slow-loop warnings fire after blocking commands
 * Joins through wlan1 since the first one: 00:01:16 -> 00:01:18 (2.1 s), 00:38:39 -> 00:38:41 (2.1 s), 01:11:47 ->
   01:11:51 (4.2 s). Default route always stayed on eth0. Strongest reading so far -24…-26 dBm (drone right next

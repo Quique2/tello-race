@@ -122,8 +122,13 @@ bool LineDetector::scanBands(const GroundProjector& proj, const LineObservation*
     double expectY = 0, slope = 0;
     bool haveExpect = false;
     int consecutiveMiss = 0, missNothingNearby = 0;
+    // With a hint (the expected start of the next segment, 80 cm past the tag) start scanning shortly before it.
+    // From a steep camera at altitude the blind zone is a few centimetres, and the tail of the segment just
+    // finished lies right under the drone: scanning from the blind zone would lock the chain onto that stub.
+    double startX = blind + p_.bandStartM;
+    if (hint) startX = std::max(startX, hint->x - 0.35);
     for (int i = 0; i < p_.bands; ++i) {
-        double X = blind + p_.bandStartM + i * p_.bandStepM;
+        double X = startX + i * p_.bandStepM;
         if (X > p_.bandMaxM) break;
         double u, v;
         if (!proj.groundToPixel(X, 0.0, u, v)) break;
@@ -207,6 +212,8 @@ bool LineDetector::scanBands(const GroundProjector& proj, const LineObservation*
         bandDbg_.push_back(dbg);
         (void)validRuns;
     }
+    LOG_DEBUG("bands: hint=%d (%.2f,%.2f) startX=%.2f blind=%.2f hzRow=%.0f scanned=%zu chain=%zu first=(%.2f,%.2f)", hint ? 1 : 0, hint ? hint->x : 0.0, hint ? hint->y : 0.0, startX, blind, hzRow,
+              bandDbg_.size(), chain.size(), chain.empty() ? 0.0 : chain.front().X, chain.empty() ? 0.0 : chain.front().Y);
     if (chain.empty()) return false;
     obs.valid = true;
     obs.mode = 1;
@@ -254,7 +261,7 @@ bool LineDetector::lineContinuesBeyond(const GroundProjector& proj, const std::v
 
 // Fallback for lines at any orientation (e.g. the start of a segment seen sideways after a turn):
 // PCA axis of the best connected component, sampled into a polyline ordered from the drone outwards.
-bool LineDetector::scanComponents(const GroundProjector& proj, LineObservation& obs, const cv::Point2d& expect) {
+bool LineDetector::scanComponents(const GroundProjector& proj, LineObservation& obs, const cv::Point2d& expect, bool haveExpect) {
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(mask_.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     double bestScore = -1e9;
@@ -308,6 +315,10 @@ bool LineDetector::scanComponents(const GroundProjector& proj, LineObservation& 
         double w = pts[pts.size() / 2].widthCm;
         if (len < 0.12 || w < 0.5 * p_.minWidthCm || w > 1.5 * p_.maxWidthCm) continue;
         if (dist0(pts.front()) > 2.2) continue;   // a segment start is never that far away
+        // With an expected start (after a tag turn) the tail of the segment just finished can lie right under the
+        // drone when the camera sees the floor beneath it: a short blob that starts under the drone is that tail,
+        // never the next segment (which begins 80 cm from the tag the drone is hovering over).
+        if (haveExpect && dist0(pts.front()) < 0.3 && len < 0.7) continue;
         double dExp = std::min(std::hypot(pts.front().X - expect.x, pts.front().Y - expect.y),
                                std::hypot(pts.back().X - expect.x, pts.back().Y - expect.y));
         double score = -dExp - (len < 0.3 ? 0.5 : 0.0) + 0.1 * std::min(len, 1.0);
@@ -396,7 +407,7 @@ LineObservation LineDetector::detect(const cv::Mat& bgr, const GroundProjector& 
     if (!bandsOk) {
         LineObservation comp;
         cv::Point2d expect = hint ? *hint : (prev && prev->valid) ? cv::Point2d(prev->nearX, prev->nearY) : cv::Point2d(0.8, 0.0);
-        if (scanComponents(proj, comp, expect)) obs = comp;
+        if (scanComponents(proj, comp, expect, hint != nullptr)) obs = comp;
     }
     if (obs.valid) finalize(obs);
     return obs;

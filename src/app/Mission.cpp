@@ -168,7 +168,10 @@ int MissionLoop::run() {
         TelloState st = drone_.state();
         Observation obs;
         double hx = 0, hy = 0;
-        perception_.setLineHint(nav_.lineHint(hx, hy), hx, hy);
+        // Two statements on purpose: as arguments of one call, hx/hy were copied before lineHint() wrote them
+        // (unspecified evaluation order), so the detector always got a (0,0) hint.
+        bool haveHint = nav_.lineHint(hx, hy);
+        perception_.setLineHint(haveHint, hx, hy);
         if (got) { double tp = wall.now(); obs = perception_.process(frame.image, st, frame.stamp, frame.seq); percMs_ += (wall.now() - tp) * 1000; iterMs_ += (wall.now() - tIter0) * 1000; tagMsAcc_ += obs.tagMs; lineMsAcc_ += obs.lineMs; ++perfN_; }
         else { obs.stamp = clock_.now(); obs.blindZoneM = perception_.projector().blindZoneX(); }
         // Keep SDK mode alive while idle on the ground. Never while airborne in ANY mode: a blocking query pauses

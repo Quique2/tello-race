@@ -27,6 +27,7 @@ struct SimParams {
     double batteryStart = 85;
     double boundsMargin = 0.3, reachRadiusM = 0.35, finishRadiusM = 0.45;
     double idleLimitS = 60, maxTimeS = 300;
+    double tracePoseS = 0;   // >0: log the true pose every N s of sim time (debug)
     void load(const Config& cfg);
 };
 
@@ -83,7 +84,7 @@ private:
     cv::Mat world_;
     GroundProjector truth_;
     std::mt19937_64 rng_;
-    double t_ = 0, takeoffT_ = 0, lastProgressT_ = 0;
+    double t_ = 0, takeoffT_ = 0, lastProgressT_ = 0, lastTraceT_ = -1e9;
     uint64_t seq_ = 0;
     double x_ = 0, y_ = 0, z_ = 0, psi_ = 90, psi0_ = 90, zTarget_ = 0;
     double vxB_ = 0, vyB_ = 0, vz_ = 0, yawRate_ = 0;

@@ -130,7 +130,10 @@ only need the link.
    `samples` > 20; this stores `camera.pitch_deg`/`camera.roll_deg`. It is also refined automatically in flight.
 5. **SDK sign conventions** (once per drone): after a `fly --dry-run` check that telemetry `pitch` is positive
    nose-up while you tilt the drone by hand (`ground.imu_pitch_sign`), and verify with a manual `go 0 50 0 30`
-   from the Tello app or a script that +y moves LEFT (`tello.go_y_left`).
+   from the Tello app or a script that +y moves LEFT (`tello.go_y_left`). Then, in MANUAL mode, push the right
+   stick slowly forward and then left while watching `vgx`/`vgy` in the page header: the navigator dead-reckons
+   the last tag with them. Set `tello.vel_scale` so that the values match m/s (the SDK prints cm/s: 0.01) and
+   `tello.vgy_sign` so that moving LEFT gives a positive `vgy` times the sign (defaults match the simulator).
 6. **Speeds**: fly the practice track with the defaults, then raise `follow.v_max` until runs start to fail,
    and back off one step. Record everything (`--record`) and replay to inspect.
 
