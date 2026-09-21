@@ -261,6 +261,17 @@ TelloState Simulator::state() const {
 
 void Simulator::checkProgress() {
     if (!flying_) return;
+    if (t_ - takeoffT_ > 1.0) {   // path fidelity: how far from the nearest line point (gaps between segments count too)
+        double best = 1e9;
+        for (const auto& sg : track_.segments)
+            for (size_t i = 1; i < sg.pts.size(); ++i) {
+                const cv::Point2d& a = sg.pts[i - 1]; const cv::Point2d& b = sg.pts[i];
+                double dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+                double u = l2 > 1e-9 ? mu::clamp(((x_ - a.x) * dx + (y_ - a.y) * dy) / l2, 0.0, 1.0) : 0.0;
+                best = std::min(best, std::hypot(x_ - (a.x + u * dx), y_ - (a.y + u * dy)));
+            }
+        res_.devSum += best; res_.devMax = std::max(res_.devMax, best); ++res_.devN;
+    }
     if (p_.tracePoseS > 0 && t_ - lastTraceT_ >= p_.tracePoseS) {
         lastTraceT_ = t_;
         const TrackTag* tg = nextTag_ < (int)track_.tags.size() ? &track_.tags[nextTag_] : nullptr;

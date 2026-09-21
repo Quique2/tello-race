@@ -61,6 +61,7 @@ public:
     struct Result {
         int segments = 0; bool finished = false, crashed = false, landed = false, tookOff = false;
         double time = 0; std::string reason;
+        double devSum = 0, devMax = 0; int devN = 0;   // distance to the nearest track line point while flying
     };
     const Result& result() const { return res_; }
     bool done() const;

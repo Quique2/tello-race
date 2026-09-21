@@ -630,8 +630,9 @@ int runSim(const Config& cfg, const MissionOptions& opt) {
         }
         const auto& r = sim.result();
         char row[256];
-        snprintf(row, sizeof(row), "episode %2d seed %llu: %-9s segments=%d/%zu time=%6.1fs  (%s)", ep + 1, (unsigned long long)seed,
-                 r.finished ? "FINISHED" : (r.crashed ? "CRASHED" : "FAILED"), r.segments, sim.track().tags.size(), r.time, r.reason.c_str());
+        snprintf(row, sizeof(row), "episode %2d seed %llu: %-9s segments=%d/%zu time=%6.1fs  path dev mean %.2f max %.2f m  (%s)", ep + 1, (unsigned long long)seed,
+                 r.finished ? "FINISHED" : (r.crashed ? "CRASHED" : "FAILED"), r.segments, sim.track().tags.size(), r.time,
+                 r.devN ? r.devSum / r.devN : 0.0, r.devMax, r.reason.c_str());
         LOG_INFO("%s", row);
         rows.push_back(row);
         if (r.finished) { ++finished; sumT += r.time; }

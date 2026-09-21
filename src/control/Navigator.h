@@ -22,10 +22,10 @@ struct NavParams {
     double slowAngleDeg = 25, curvSlow = 1.5, rcSlew = 250;
     double lostCoastS = 0.4, lostHoverS = 1.0;
     double kAlt = 1.0, maxUd = 30, altDeadCm = 4;
-    double tagSlowDistM = 1.8;
+    double tagSlowDistM = 0.5;
     // tag handling
     int confirmFrames = 2;
-    double approachDistM = 1.4, settleS = 0.8, settleMaxS = 2.5, gapM = 0.8, lineEndAssocM = 1.0, stopOvershootM = 0.15;
+    double approachDistM = 0, approachMarginM = 0.3, endTangentMinTagM = 0.45, settleS = 0.8, settleMaxS = 2.5, gapM = 0.8, lineEndAssocM = 1.0, stopOvershootM = 0.15;
     double approachBackoffM = 0.5;   // a tag found closer than this (under the drone, from altitude) is measured after backing off
     double curvedApproachDeg = 15, tagEndAssocM = 0.6, acquireMaxOffM = 0.75;
     bool backAfterTurn = true, forwardFastPath = false;
@@ -85,6 +85,7 @@ private:
     bool tagConfirmed() const;
     void updateEndTangent(const Observation& obs, const TelloState& st);
     double endTangentRelDeg(const TelloState& st) const;
+    double approachDist() const;
     bool pursuitTarget(const LineObservation& line, double& tx, double& ty, double* tangentDeg = nullptr) const;
 
     void doTakeoff(const TelloState& st);

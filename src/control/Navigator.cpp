@@ -26,7 +26,9 @@ void NavParams::load(const Config& c) {
     altDeadCm = c.getDouble("follow.alt_deadband_cm", altDeadCm);
     tagSlowDistM = c.getDouble("follow.tag_slow_dist_m", tagSlowDistM);
     confirmFrames = c.getInt("tag.confirm_frames", confirmFrames);
-    approachDistM = c.getDouble("tag.approach_dist_m", approachDistM);
+    approachDistM = c.getDouble("tag.approach_dist_m", approachDistM);      // <= 0: automatic (blind zone + approach_margin_m)
+    approachMarginM = c.getDouble("tag.approach_margin_m", approachMarginM);
+    endTangentMinTagM = c.getDouble("tag.end_tangent_min_tag_m", endTangentMinTagM);
     approachBackoffM = c.getDouble("tag.approach_backoff_m", approachBackoffM);
     settleS = c.getDouble("tag.settle_s", settleS); settleMaxS = c.getDouble("tag.settle_max_s", settleMaxS);
     gapM = c.getDouble("tag.gap_m", gapM);
@@ -236,6 +238,12 @@ void Navigator::updateEndTangent(const Observation& obs, const TelloState& st) {
     double thetaE = mu::rad2deg(std::atan2(E.Y - P.Y, E.X - P.X));   // line direction where the visible chain ends
     double thetaT, quality;                                          // direction at the tag / segment end, and how close
     bool tagTracked = tag_.id > 0 && now_ - tag_.lastSeen < 0.5;
+    if (tagTracked && tag_.X < p_.endTangentMinTagM) {
+        // following right up to the tag (steep view): this close the visible line is mostly under/behind the drone
+        // and its direction is unreliable; the samples taken on the approach stand
+        LOG_DEBUG("endtangent: skip (tag %.2f m: too close, keeping the approach samples)", tag_.X);
+        return;
+    }
     if (tagTracked) {
         // The line ends at the tag. If the chain stops before it (bend hidden by the band scan limits), the hidden
         // part is close to a circular arc: its chord bisects the tangents, so theta_T = 2 * chord - theta_E.
@@ -276,6 +284,14 @@ void Navigator::updateEndTangent(const Observation& obs, const TelloState& st) {
     endYawValid_ = true;
     LOG_DEBUG("endtangent: thetaE=%+.0f thetaT=%+.0f q=%.2f pts=%zu tag=%d -> abs=%.0f (n=%d, yaw=%d)", thetaE, thetaT, quality,
               l.pts.size(), tagTracked ? tag_.id : 0, endAbsYaw_, n, st.yaw);
+}
+
+// Distance at which the line following ends and the tag gets measured: the tag must stay visible while it is
+// measured, so it is the camera's blind zone plus a margin; a fixed value can be forced in the config.
+double Navigator::approachDist() const {
+    if (p_.approachDistM > 0) return p_.approachDistM;
+    if (blindZone_ > 0.4) return std::max(1.4, blindZone_ + 0.65);   // forward camera: the line end must still be in view when measuring
+    return std::max(0.35, blindZone_ + p_.approachMarginM);           // steep mirror view: follow the line right up to the tag
 }
 
 double Navigator::endTangentRelDeg(const TelloState& st) const {   // turn (cw +) needed to face the line end direction
@@ -526,7 +542,7 @@ void Navigator::beginAcquire(const char* why) {
 
 void Navigator::doAcquire(const Observation& obs, const TelloState& st) {
     double ud = altitudeUd(st);
-    if (tagConfirmed() && tag_.id != 1 && tag_.X < p_.approachDistM) { setPhase(Phase::TagApproach, "tag ahead during acquire"); return; }
+    if (tagConfirmed() && tag_.id != 1 && tag_.X < approachDist()) { setPhase(Phase::TagApproach, "tag ahead during acquire"); return; }
     if (!obs.line.valid) {
         if (now_ - phaseStart_ > p_.acquireTimeoutS) { beginSearch("no line to acquire", st); return; }
         sendRc(0, 0, ud, 0);
@@ -584,15 +600,15 @@ void Navigator::doFollow(const Observation& obs, const TelloState& st) {
                         (!endYawValid_ && (std::fabs(lastLine_.headingDeg) > p_.curvedApproachDeg || std::fabs(lastLine_.curvature) > 0.8));
             // Default: FORWARD tags get the same precise maneuver as the others (go over the tag, face the line end
             // direction, step back, acquire the segment that starts 80 cm ahead). The fast coast is a speed option.
-            if (tag_.X < p_.approachDistM && tag_.X > blindZone_ + 0.2 && (bend || !p_.forwardFastPath)) {
+            if (tag_.X < approachDist() && tag_.X > blindZone_ + 0.2 && (bend || !p_.forwardFastPath)) {
                 pendingDir_ = 1;
                 setPhase(Phase::TagApproach, bend ? "FORWARD tag after a bend: precise maneuver" : "FORWARD tag: precise maneuver");
                 return;
             }
         } else {
-            if (tag_.X < p_.approachDistM) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag within approach distance"); return; }
-            double span = std::max(0.2, p_.tagSlowDistM - p_.approachDistM);
-            vScale = mu::clamp((tag_.X - p_.approachDistM) / span, 0.35, 1.0);
+            if (tag_.X < approachDist()) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag within approach distance"); return; }
+            double span = std::max(0.2, p_.tagSlowDistM);            // slow down over this distance before the approach point
+            vScale = mu::clamp((tag_.X - approachDist()) / span, 0.35, 1.0);
         }
     }
     if (obs.line.valid) {
@@ -652,8 +668,9 @@ void Navigator::doTagApproach(const Observation& obs, const TelloState& st) {
         hover(true);
         // From altitude a tag can be found right under the drone (drifted onto it while searching). Its position
         // and the line end direction are unreliable that close: back off to a measuring distance first, once.
-        if (tag_.X < p_.approachBackoffM) {
-            int backCm = mu::roundInt((p_.approachDistM - tag_.X) * 100.0 * 0.6);
+        double backoffAt = std::min(p_.approachBackoffM, approachDist() - 0.15);   // never below where a normal approach stops
+        if (tag_.X < backoffAt) {
+            int backCm = mu::roundInt((approachDist() - tag_.X) * 100.0 * 0.6);
             backCm = mu::clamp(backCm, 30, 120);
             LOG_INFO("NAV tag ID%d too close to measure (X=%.2f): backing off %d cm", tag_.id, tag_.X, backCm);
             drone_.move("back", backCm);
@@ -772,7 +789,7 @@ bool Navigator::visitedTagAhead(const Observation& obs) const {
 }
 
 void Navigator::doGapCoast(const Observation& obs, const TelloState& st) {
-    if (tagConfirmed() && tag_.id != 1 && tag_.X < p_.approachDistM) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag ahead during gap"); return; }
+    if (tagConfirmed() && tag_.id != 1 && tag_.X < approachDist()) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag ahead during gap"); return; }
     backwardFrames_ = visitedTagAhead(obs) ? backwardFrames_ + 1 : 0;
     if (backwardFrames_ >= 3) {
         LOG_WARN("NAV a tag already passed is straight ahead: the segment was retraced backwards -> turning around");
@@ -856,7 +873,7 @@ void Navigator::doSearch(const Observation& obs, const TelloState& st) {
         beginAcquire("line found while searching");
         return;
     }
-    if (tagConfirmed() && tag_.id != 1 && tag_.X < p_.approachDistM) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag found while searching"); return; }
+    if (tagConfirmed() && tag_.id != 1 && tag_.X < approachDist()) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag found while searching"); return; }
     if (now_ - searchStart_ > p_.maxSearchS) { hover(true); setPhase(Phase::Lost, "search exhausted, holding position"); return; }
     double ud = altitudeUd(st);
     double sinceStep = now_ - searchStepStart_;
