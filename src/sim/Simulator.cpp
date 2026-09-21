@@ -38,6 +38,7 @@ void SimParams::load(const Config& c) {
 
 Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackKind, const TagDetector& tagRenderer)
     : rng_(seed), seed_(seed) {
+    cv::theRNG().state = seed * 2654435761ULL + 12345;   // image noise (cv::randn) reproducible per episode, whatever ran before
     p_.load(cfg);
     style_.pxPerM = cfg.getDouble("sim.px_per_m", 100);
     style_.tagSizeM = cfg.getDouble("tag.size_m", 0.16);
