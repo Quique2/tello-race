@@ -96,9 +96,10 @@ const trailPts=[];const trail=new THREE.Line(new THREE.BufferGeometry(),new THRE
 function footprint(x,y,z,yawDeg,pitchDeg){
   const h=THREE.MathUtils.degToRad(sc?sc.hfov:55)/2,v=THREE.MathUtils.degToRad(sc?sc.vfov:43)/2,p=THREE.MathUtils.degToRad(pitchDeg),psi=THREE.MathUtils.degToRad(yawDeg);
   const pts=[];
-  for(const [sa,se] of [[-1,1],[1,1],[1,-1],[-1,-1]]){                 // corners: top-left, top-right, bottom-right, bottom-left
-    const e=-p+se*v,a=sa*h;                                            // elevation (down negative), azimuth (left positive)
-    let dx=Math.cos(e)*Math.cos(a),dy=Math.cos(e)*Math.sin(a),dz=Math.sin(e);
+  for(const [sa,se] of [[1,1],[-1,1],[-1,-1],[1,-1]]){                 // image corners: top-left, top-right, bottom-right, bottom-left
+    // pinhole ray in camera axes (forward, left, up), then the optical axis pitched down by p (valid past vertical too)
+    const l=sa*Math.tan(h),u=se*Math.tan(v);
+    let dx=Math.cos(p)+u*Math.sin(p),dy=l,dz=-Math.sin(p)+u*Math.cos(p);
     const wx=dx*Math.cos(psi)-dy*Math.sin(psi),wy=dx*Math.sin(psi)+dy*Math.cos(psi);
     let t=dz<-1e-3?-z/dz:8/Math.hypot(wx,wy);t=Math.min(t,8);
     pts.push([x+t*wx,y+t*wy,0.006]);

@@ -31,7 +31,7 @@ bool WebServer::start(const Options& o, std::string* err) {
     mg_init_library(0);
     std::string port = std::to_string(o.port);
     const char* options[] = {"listening_ports", port.c_str(), "num_threads", "16", "enable_directory_listing", "no",
-                             "request_timeout_ms", "30000", "websocket_timeout_ms", "3600000", "enable_keep_alive", "yes",
+                             "request_timeout_ms", "2000", "websocket_timeout_ms", "3600000", "enable_keep_alive", "yes",   // 2 s: a vanished browser must not stall the control loop's broadcasts
                              "tcp_nodelay", "1", nullptr};
     mg_callbacks cb;
     memset(&cb, 0, sizeof(cb));
@@ -72,7 +72,11 @@ void WebServer::publishState(const std::string& json) {
     if (!ctx_) return;
     std::lock_guard<std::mutex> lk(wsMtx_);
     lastState_ = json;
-    for (auto& kv : ws_) mg_websocket_write(kv.first, MG_WEBSOCKET_OPCODE_TEXT, json.data(), json.size());
+    for (auto it = ws_.begin(); it != ws_.end();) {
+        int n = mg_websocket_write(it->first, MG_WEBSOCKET_OPCODE_TEXT, json.data(), json.size());
+        if (n <= 0) it = ws_.erase(it);   // gone (browser closed or reloaded): never write to it again
+        else ++it;
+    }
 }
 
 bool WebServer::popCommand(WebCommand& out) {
