@@ -1,5 +1,6 @@
 #pragma once
 #include <deque>
+#include <functional>
 #include <random>
 #include <string>
 #include <vector>
@@ -72,6 +73,9 @@ public:
     const cv::Mat& worldImage() const { return world_; }         // rendered floor (top view, style_.pxPerM per metre)
     double pxPerM() const { return style_.pxPerM; }
     double camPitchTrueDeg() const { return p_.camPitchTrueDeg; }
+    // called after every physics step of a blocking command (go / turn / move): lets the host pace it in wall
+    // time and publish the intermediate poses, so viewers see the flight instead of a jump
+    void setBlockingStepCallback(std::function<void(double dtSim)> cb) { blockingCb_ = std::move(cb); }
     double hfovDeg() const { return truth_.K().hfovDeg(); }
     double vfovDeg() const { return truth_.K().vfovDeg(); }
 
@@ -90,6 +94,7 @@ private:
     GroundProjector truth_;
     std::mt19937_64 rng_;
     double t_ = 0, takeoffT_ = 0, lastProgressT_ = 0, lastTraceT_ = -1e9;
+    std::function<void(double)> blockingCb_;
     uint64_t seq_ = 0;
     double x_ = 0, y_ = 0, z_ = 0, psi_ = 90, psi0_ = 90, zTarget_ = 0;
     double vxB_ = 0, vyB_ = 0, vz_ = 0, yawRate_ = 0;

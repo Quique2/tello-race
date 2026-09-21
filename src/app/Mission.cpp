@@ -162,6 +162,19 @@ int MissionLoop::run() {
         web_->setSimScene(js, png);
         LOG_INFO("web: simulation 3D view at /sim3d (%zu segments, %zu tags, floor texture %dx%d)", tr.segments.size(), tr.tags.size(), small.cols, small.rows);
     }
+    if (sim_) {   // blocking go/turn commands: pace them in wall time and stream the pose so viewers see the flight
+        bool pace = opt_.realtime && (!opt_.headless || webOn_);
+        sim_->setBlockingStepCallback([this, pace](double dtSim) {
+            static SteadyClock wc; static double acc = 0, lastPub = -1;
+            if (pace) wc.sleep(dtSim);
+            acc += dtSim;
+            if (webOn_ && (lastPub < 0 || acc - lastPub >= 0.1)) {
+                lastPub = acc;
+                Observation none; none.stamp = clock_.now();
+                web_->publishState(stateJson(none, drone_.state(), 0.0));
+            }
+        });
+    }
     if (opt_.autoStart) nav_.start(startAtTag_);
     else LOG_INFO("Ready. Press 't' in the video window to take off and start (l/space = land, e = emergency, q = quit).");
 

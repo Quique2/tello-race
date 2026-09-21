@@ -135,6 +135,7 @@ void Simulator::moveBlocking(double dxB, double dyB, double dzB, double speedMs)
         bodyRoll_ = -p_.leanDegPerMs * vyB_;
         t_ += s;
         checkProgress();
+        if (blockingCb_) blockingCb_(s);
         if (!flying_) return;
     }
     vxB_ = vyB_ = vz_ = 0;
@@ -156,6 +157,7 @@ void Simulator::turnBlocking(double deg) {
         psi_ = mu::wrapDeg(psi0 + actual * f);
         t_ += s;
         physicsStep(0);
+        if (blockingCb_) blockingCb_(s);
     }
     yawRate_ = 0;
     advance(0.3);
