@@ -55,6 +55,8 @@ double GroundProjector::horizonRow(double u) const {
     double a = (u - K_.cx) / K_.fx;
     double r20 = R_(2, 0), r21 = R_(2, 1), r22 = R_(2, 2);
     if (std::fabs(r21) < 1e-6) return -1e9;
+    // a camera looking past vertical (steep mirror) has no sky in the image: the root below is the horizon behind
+    if (pixelRayBody(u, 0.0)[2] < 0) return -1e9;
     double b = -(r20 * a + r22) / r21;
     return K_.cy + K_.fy * b;
 }
