@@ -100,6 +100,7 @@ private:
     double manualRcT_ = 0;
     double lastStaleLog_ = 0;
     int flipCode_ = 2;     // cv::flip code for live frames; 2 = no flip (camera.flip)
+    int blankTopPx_ = 0;   // rows at the top (after the flip) that a short mirror pane does not cover (camera.blank_top_px)
     std::string flipName_ = "none";
     void setFlip(const std::string& f) {   // none | horizontal | vertical | both
         flipCode_ = f == "horizontal" ? 1 : f == "vertical" ? 0 : f == "both" ? -1 : 2;
@@ -125,6 +126,8 @@ int MissionLoop::run() {
         wifiIfname_ = cfg_.getString("tello.wifi_ifname", "auto");
         setFlip(cfg_.getString("camera.flip", "none"));
         if (flipCode_ != 2) LOG_INFO("camera.flip = %s: live frames are flipped before perception (mirror mount)", flipName_.c_str());
+        blankTopPx_ = std::max(0, cfg_.getInt("camera.blank_top_px", 0));
+        if (blankTopPx_ > 0) LOG_INFO("camera.blank_top_px = %d: the top rows are painted white (image beyond the mirror pane)", blankTopPx_);
     }
     if (opt_.record) startRecording();
     webOn_ = web_ && cfg_.getBool("web.enabled", false);
@@ -155,6 +158,8 @@ int MissionLoop::run() {
         double tIter0 = wall.now();
         bool got = src_.latest(frame, seq_, 0.25);
         if (got && flipCode_ != 2) cv::flip(frame.image, frame.image, flipCode_);   // mirror mount: un-mirror before perception
+        if (got && blankTopPx_ > 0 && blankTopPx_ < frame.image.rows)                 // short pane: those rows see past the mirror
+            frame.image(cv::Rect(0, 0, frame.image.cols, blankTopPx_)).setTo(cv::Scalar(255, 255, 255));
         if (got) { seq_ = frame.seq; haveFrame = true; lastFrameWall = wall.now(); videoRecoveries_ = 0; }
         else if (src_.ended()) {
             // A live Tello stream stops on a camera switch or a Wi-Fi hiccup. Ask for it again and
