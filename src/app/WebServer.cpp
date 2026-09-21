@@ -102,6 +102,14 @@ int WebServer::onRequest(mg_connection* c) {
     if (uri == "/" || uri == "/index.html") return serveIndex(c);
     if (uri == "/stream.mjpg") return serveStream(c);
     if (uri == "/api/status") return serveStatus(c);
+    if (uri == "/sim3d" || uri == "/sim3d.html") return serveBlob(c, "text/html; charset=utf-8", sim3dPageHtml(), strlen(sim3dPageHtml()), false);
+    if (uri == "/sim/scene.json" || uri == "/sim/world.png") {
+        std::string js; std::vector<unsigned char> png;
+        { std::lock_guard<std::mutex> lk(wsMtx_); js = sceneJson_; png = worldPng_; }
+        if (js.empty()) { mg_send_http_error(c, 404, "no simulation scene"); return 404; }
+        if (uri == "/sim/scene.json") return serveBlob(c, "application/json", js.data(), js.size(), true);
+        return serveBlob(c, "image/png", (const char*)png.data(), png.size(), true);
+    }
     mg_send_http_error(c, 404, "not found");
     return 404;
 }
@@ -112,6 +120,19 @@ int WebServer::serveIndex(mg_connection* c) {
     mg_printf(c, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-cache\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", len);
     mg_write(c, html, len);
     return 200;
+}
+
+// one-shot response with a body; needToken = a token query parameter is required (viewer or operator)
+int WebServer::serveBlob(mg_connection* c, const char* contentType, const char* data, size_t len, bool needToken) {
+    if (needToken && roleFor(c) == NONE) { mg_send_http_error(c, 401, "token required"); return 401; }
+    mg_printf(c, "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nCache-Control: no-cache\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", contentType, len);
+    mg_write(c, data, len);
+    return 200;
+}
+
+void WebServer::setSimScene(const std::string& sceneJson, const std::vector<unsigned char>& worldPng) {
+    std::lock_guard<std::mutex> lk(wsMtx_);
+    sceneJson_ = sceneJson; worldPng_ = worldPng;
 }
 
 int WebServer::serveStatus(mg_connection* c) {
@@ -217,13 +238,15 @@ std::string stateToJson(const StateSnapshot& s) {
     std::string ev;
     for (size_t i = s.events.size() > 6 ? s.events.size() - 6 : 0; i < s.events.size(); ++i)
         ev += (ev.empty() ? "\"" : ",\"") + esc(s.events[i]) + "\"";
-    char buf[2048];
+    char simBuf[256] = "";
+    if (s.sim) snprintf(simBuf, sizeof(simBuf), ",\"sim\":{\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,\"yaw\":%.1f,\"camPitch\":%.1f}", s.simX, s.simY, s.simZ, s.simYaw, s.camPitch);
+    char buf[2560];
     snprintf(buf, sizeof(buf),
              "{\"phase\":\"%s\",\"seg\":%d,\"t\":%.1f,\"telemetry\":%s,\"bat\":%d,\"tof\":%d,\"h\":%d,\"yaw\":%d,\"pitch\":%d,"
              "\"roll\":%d,\"templ\":%d,\"temph\":%d,\"fps\":%.1f,\"camera\":\"%s\",\"recording\":%s,\"drone\":\"%s\","
-             "\"mode\":\"%s\",\"flying\":%s,\"tag\":%d,\"tagX\":%.2f,\"mirror\":\"%s\",\"noticeId\":%d,\"notice\":\"%s\",\"wifi\":%d,\"rcAge\":%.1f,\"stale\":%s,\"rc\":[%d,%d,%d,%d],\"events\":[%s]}",
+             "\"mode\":\"%s\",\"flying\":%s,\"tag\":%d,\"tagX\":%.2f,\"mirror\":\"%s\",\"noticeId\":%d,\"notice\":\"%s\",\"wifi\":%d,\"rcAge\":%.1f,\"stale\":%s,\"rc\":[%d,%d,%d,%d],\"events\":[%s]%s}",
              s.phase, s.seg, s.t, s.telemetry ? "true" : "false", s.bat, s.tof, s.h, s.yaw, s.pitch, s.roll, s.templ, s.temph, s.fps,
              s.belly ? "belly" : "front", s.recording ? "true" : "false", s.drone, s.manual ? "manual" : "mission", s.flying ? "true" : "false", s.tagId, s.tagX, s.mirror.c_str(), s.noticeId, s.notice.c_str(), s.wifi, s.rcAge, s.stale ? "true" : "false", s.rc[0], s.rc[1], s.rc[2], s.rc[3],
-             ev.c_str());
+             ev.c_str(), simBuf);
     return buf;
 }

@@ -140,6 +140,28 @@ int MissionLoop::run() {
         wo.jpegQuality = cfg_.getInt("web.jpeg_quality", 70);
         if (!web_->start(wo, &err)) { LOG_ERROR("%s", err.c_str()); webOn_ = false; }
     }
+    if (webOn_ && sim_) {   // scene for the /sim3d page: track geometry, tags, the rendered floor as a texture
+        const Track& tr = sim_->track();
+        std::string js = "{\"worldSize\":" + std::to_string(tr.worldSize) + ",\"pxPerM\":" + std::to_string(sim_->pxPerM()) +
+                         ",\"hfov\":" + std::to_string(sim_->hfovDeg()) + ",\"vfov\":" + std::to_string(sim_->vfovDeg()) + ",\"segments\":[";
+        for (size_t i = 0; i < tr.segments.size(); ++i) {
+            js += i ? ",[" : "[";
+            for (size_t k = 0; k < tr.segments[i].pts.size(); ++k) {
+                char b[64]; snprintf(b, sizeof(b), "%s[%.3f,%.3f]", k ? "," : "", tr.segments[i].pts[k].x, tr.segments[i].pts[k].y); js += b;
+            }
+            js += "]";
+        }
+        js += "],\"tags\":[";
+        for (size_t i = 0; i < tr.tags.size(); ++i) {
+            char b[96]; snprintf(b, sizeof(b), "%s{\"id\":%d,\"x\":%.3f,\"y\":%.3f,\"yaw\":%.1f}", i ? "," : "", tr.tags[i].id, tr.tags[i].x, tr.tags[i].y, tr.tags[i].yawDeg); js += b;
+        }
+        js += "]}";
+        std::vector<unsigned char> png;
+        cv::Mat small; cv::resize(sim_->worldImage(), small, cv::Size(), 0.5, 0.5, cv::INTER_AREA);
+        cv::imencode(".png", small, png);
+        web_->setSimScene(js, png);
+        LOG_INFO("web: simulation 3D view at /sim3d (%zu segments, %zu tags, floor texture %dx%d)", tr.segments.size(), tr.tags.size(), small.cols, small.rows);
+    }
     if (opt_.autoStart) nav_.start(startAtTag_);
     else LOG_INFO("Ready. Press 't' in the video window to take off and start (l/space = land, e = emergency, q = quit).");
 
@@ -375,6 +397,7 @@ std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st,
         s.rc[0] = rc.lr; s.rc[1] = rc.fb; s.rc[2] = rc.ud; s.rc[3] = rc.yaw;
     }
     s.events = nav_.events;
+    if (sim_) { s.sim = true; s.simX = sim_->x(); s.simY = sim_->y(); s.simZ = sim_->z(); s.simYaw = sim_->yawDeg(); s.camPitch = sim_->camPitchTrueDeg(); }
     return stateToJson(s);
 }
 

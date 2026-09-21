@@ -79,6 +79,7 @@ set(SRC
   src/app/Tools.cpp
   src/app/WebServer.cpp
   src/app/WebPage.cpp
+  src/app/WebPage3d.cpp
   src/app/WebPageScript.cpp)
 
 add_executable(tello_race ${SRC})

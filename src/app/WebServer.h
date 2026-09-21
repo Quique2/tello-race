@@ -36,6 +36,7 @@ public:
     bool running() const { return ctx_ != nullptr; }
     void publishFrame(const cv::Mat& bgr);            // throttled to Options::fps, JPEG encoded once per frame
     void publishState(const std::string& json);       // broadcast to all websocket clients
+    void setSimScene(const std::string& sceneJson, const std::vector<unsigned char>& worldPng);   // for /sim3d
     bool popCommand(WebCommand& out);
     int streamClients() const { return streamClients_; }
     int wsClients();
@@ -53,6 +54,7 @@ private:
     int serveIndex(mg_connection* c);
     int serveStream(mg_connection* c);
     int serveStatus(mg_connection* c);
+    int serveBlob(mg_connection* c, const char* contentType, const char* data, size_t len, bool needToken);
 
     mg_context* ctx_ = nullptr;
     Options opt_;
@@ -64,6 +66,8 @@ private:
     std::mutex wsMtx_;
     std::map<mg_connection*, Role> ws_;
     std::string lastState_;
+    std::string sceneJson_;
+    std::vector<unsigned char> worldPng_;
     std::mutex cmdMtx_;
     std::deque<WebCommand> cmds_;
     std::atomic<int> streamClients_{0};
@@ -71,6 +75,7 @@ private:
 
 // HTML page served at "/" (src/app/WebPage.cpp)
 const char* webPageHtml();
+const char* sim3dPageHtml();
 
 // Telemetry + mission snapshot serialized for the page (built here so no JSON code lives in the mission loop)
 struct StateSnapshot {
@@ -92,5 +97,7 @@ struct StateSnapshot {
     std::string mirror = "none";   // camera.flip in effect
     int noticeId = 0;
     std::vector<std::string> events;
+    bool sim = false;                         // simulator truth for the 3D page
+    double simX = 0, simY = 0, simZ = 0, simYaw = 0, camPitch = 0;
 };
 std::string stateToJson(const StateSnapshot& s);

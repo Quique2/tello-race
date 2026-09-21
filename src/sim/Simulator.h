@@ -69,6 +69,11 @@ public:
     double y() const { return y_; }
     double z() const { return z_; }
     double yawDeg() const { return psi_; }
+    const cv::Mat& worldImage() const { return world_; }         // rendered floor (top view, style_.pxPerM per metre)
+    double pxPerM() const { return style_.pxPerM; }
+    double camPitchTrueDeg() const { return p_.camPitchTrueDeg; }
+    double hfovDeg() const { return truth_.K().hfovDeg(); }
+    double vfovDeg() const { return truth_.K().vfovDeg(); }
 
 private:
     void advance(double dt);
