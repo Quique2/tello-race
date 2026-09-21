@@ -7,6 +7,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -72,6 +73,9 @@ private:
     void startRecording();
     void stopRecording();
     void record(const cv::Mat& frame, const Observation& obs, const TelloState& st);
+public:
+    const std::string& simRestart() const { return simRestart_; }
+private:
     bool restartVideo(const char* why);   // re-request the Tello stream and re-open the decoder
     std::string stateJson(const Observation& obs, const TelloState& st, double fps);
     void applyWebCommand(const WebCommand& c);
@@ -88,6 +92,8 @@ private:
     cv::VideoWriter writer_;
     std::ofstream csv_;
     bool recording_ = false, showMask_ = true, showDebug_ = true, quitting_ = false;
+    bool abortEpisode_ = false;      // simulator: end this episode now (settings change from the page)
+    std::string simRestart_;         // requested settings "pitch=..;alt=..;track=..;seed=.."
     uint64_t seq_ = 0;
     int startAtTag_ = 0;
     int videoRecoveries_ = 0;
@@ -143,7 +149,9 @@ int MissionLoop::run() {
     if (webOn_ && sim_) {   // scene for the /sim3d page: track geometry, tags, the rendered floor as a texture
         const Track& tr = sim_->track();
         std::string js = "{\"worldSize\":" + std::to_string(tr.worldSize) + ",\"pxPerM\":" + std::to_string(sim_->pxPerM()) +
-                         ",\"hfov\":" + std::to_string(sim_->hfovDeg()) + ",\"vfov\":" + std::to_string(sim_->vfovDeg()) + ",\"segments\":[";
+                         ",\"hfov\":" + std::to_string(sim_->hfovDeg()) + ",\"vfov\":" + std::to_string(sim_->vfovDeg()) +
+                         ",\"pitch\":" + std::to_string(sim_->camPitchTrueDeg()) + ",\"alt\":" + std::to_string(cfg_.getInt("mission.altitude_cm", 0)) +
+                         ",\"track\":\"" + opt_.track + "\",\"seed\":" + std::to_string(sim_->seed()) + ",\"segments\":[";
         for (size_t i = 0; i < tr.segments.size(); ++i) {
             js += i ? ",[" : "[";
             for (size_t k = 0; k < tr.segments[i].pts.size(); ++k) {
@@ -188,6 +196,7 @@ int MissionLoop::run() {
     double lastStateT = 0;
     while (true) {
         if (quitting_ && !nav_.flying()) break;
+        if (abortEpisode_) break;
         WebCommand wc;
         while (webOn_ && web_->popCommand(wc)) applyWebCommand(wc);
         double tIter0 = wall.now();
@@ -340,6 +349,10 @@ void MissionLoop::applyWebCommand(const WebCommand& c) {
     }
     else if (c.cmd == "emergency") handleKey('e');
     else if (c.cmd == "record") handleKey('r');
+    else if (c.cmd == "sim") {   // restart the simulation with other settings: pitch=..;alt=..;track=..;seed=..
+        if (!sim_) notice("sim settings apply to the simulator only");
+        else { simRestart_ = c.arg.empty() ? "same" : c.arg; abortEpisode_ = true; notice("simulation restarting: " + simRestart_); }
+    }
     else if (c.cmd == "camera") handleKey('v');
     else if (c.cmd == "tag") handleKey('0' + std::max(0, std::min(3, atoi(c.arg.c_str()))));
 }
@@ -588,14 +601,33 @@ int runSim(const Config& cfg, const MissionOptions& opt) {
     double sumT = 0;
     std::vector<std::string> rows;
     WebServer web;   // one server for the whole batch: the browser stays connected between episodes
-    for (int ep = 0; ep < std::max(1, opt.episodes); ++ep) {
-        uint64_t seed = opt.seed + ep;
+    Config live = cfg;            // settings the web page may change between episodes (camera angle, altitude, course)
+    MissionOptions o = opt;
+    for (int ep = 0; ep < std::max(1, o.episodes); ++ep) {
+        uint64_t seed = o.seed + ep;
         TagDetector renderer;
         std::string err;
-        if (!renderer.init(cfg.getString("tag.family", "tag36h11"), 2.0, 0.0, 1, false, 0.25, &err)) { LOG_ERROR("%s", err.c_str()); return 1; }
-        Simulator sim(cfg, seed, opt.track, renderer);
-        MissionLoop loop(sim, sim, sim, cfg, opt, &sim, &web);
+        if (!renderer.init(live.getString("tag.family", "tag36h11"), 2.0, 0.0, 1, false, 0.25, &err)) { LOG_ERROR("%s", err.c_str()); return 1; }
+        Simulator sim(live, seed, o.track, renderer);
+        MissionLoop loop(sim, sim, sim, live, o, &sim, &web);
         loop.run();
+        if (!loop.simRestart().empty()) {   // page asked for other settings: apply them and start over from that seed
+            std::string req = loop.simRestart(), item;
+            std::istringstream ss(req);
+            while (std::getline(ss, item, ';')) {
+                size_t eq = item.find('='); if (eq == std::string::npos) continue;
+                std::string k = item.substr(0, eq), v = item.substr(eq + 1);
+                if (k == "pitch") { live.set("sim.cam_pitch_true_deg", v); live.set("camera.pitch_deg", v); }
+                else if (k == "alt") live.set("mission.altitude_cm", v);
+                else if (k == "track") o.track = (v == "example") ? "example" : "random";
+                else if (k == "seed") o.seed = (uint64_t)std::max(0LL, atoll(v.c_str()));
+            }
+            LOG_INFO("simulation restarted from the page: %s -> pitch %s deg, altitude %s cm, track %s, seed %llu", req.c_str(),
+                     live.getString("sim.cam_pitch_true_deg", "?").c_str(), live.getString("mission.altitude_cm", "?").c_str(), o.track.c_str(),
+                     (unsigned long long)o.seed);
+            ep = -1;           // restart the count at the requested seed
+            continue;
+        }
         const auto& r = sim.result();
         char row[256];
         snprintf(row, sizeof(row), "episode %2d seed %llu: %-9s segments=%d/%zu time=%6.1fs  (%s)", ep + 1, (unsigned long long)seed,
@@ -608,5 +640,5 @@ int runSim(const Config& cfg, const MissionOptions& opt) {
     printf("\n==== simulation summary: %d/%d courses completed, mean time %.1fs ====\n", finished, std::max(1, opt.episodes),
            finished ? sumT / finished : 0.0);
     for (auto& r : rows) printf("%s\n", r.c_str());
-    return finished == std::max(1, opt.episodes) ? 0 : 2;
+    return finished == std::max(1, o.episodes) ? 0 : 2;
 }

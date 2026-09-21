@@ -18,7 +18,15 @@ canvas{display:block}
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head><body>
 <div id="hud">connecting…</div>
-<div id="ctl"><label><input type="checkbox" id="follow" checked> follow the drone</label><label><input type="checkbox" id="foot" checked> camera footprint</label><label><input type="checkbox" id="trail" checked> trail</label></div>
+<div id="ctl"><label><input type="checkbox" id="follow" checked> follow the drone</label><label><input type="checkbox" id="foot" checked> camera footprint</label><label><input type="checkbox" id="trail" checked> trail</label>
+<hr style="border:0;border-top:1px solid #444;margin:8px 0">
+<div style="font-weight:600;margin-bottom:4px">simulation settings</div>
+<label>camera view <select id="pitch"><option value="12">12° stock camera (fly at 50 cm)</option><option value="30">30° (mirror)</option><option value="45">45°</option><option value="67">67°</option><option value="68" selected>68° your holder</option><option value="70">70°</option><option value="74">74°</option><option value="83">83°</option><option value="96">96° old holder</option><option value="108">108°</option></select></label>
+<label>altitude <select id="alt"><option value="50">50 cm</option><option value="100">100 cm</option><option value="150" selected>150 cm</option><option value="200">200 cm</option><option value="250">250 cm</option></select></label>
+<label>course <select id="track"><option value="example">example (slides)</option><option value="random" selected>random</option></select></label>
+<label>seed <input id="seed" type="number" value="300" min="0" style="width:80px"> <span id="seedhint" style="color:#8a94a6">300-319 = the tested set</span></label>
+<div style="margin-top:6px"><button id="restart">restart with these settings</button></div>
+<div id="cur" style="color:#8a94a6;margin-top:4px"></div></div>
 <div id="msg"></div>
 <script type="module">
 import * as THREE from 'three';
@@ -39,6 +47,9 @@ addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProje
 let sc=null;
 try{sc=await (await fetch('/sim/scene.json'+q)).json();}catch(e){$('msg').textContent='no simulation scene: run "tello_race sim --set web.enabled=1" (with the token in the URL)';}
 if(sc){
+  $('cur').textContent=`now: ${sc.pitch.toFixed(0)}° at ${sc.alt} cm, ${sc.track} seed ${sc.seed}`;
+  const setSel=(id,v)=>{const e=$(id);if([...e.options].some(o=>o.value==String(v)))e.value=String(v);};
+  setSel('pitch',Math.round(sc.pitch));setSel('alt',sc.alt);setSel('track',sc.track);$('seed').value=sc.seed;
   const tex=new THREE.TextureLoader().load('/sim/world.png'+q);tex.colorSpace=THREE.SRGBColorSpace;tex.anisotropy=8;
   const floor=new THREE.Mesh(new THREE.PlaneGeometry(sc.worldSize,sc.worldSize),new THREE.MeshLambertMaterial({map:tex}));
   floor.rotation.x=-Math.PI/2;scene.add(floor);
@@ -105,10 +116,18 @@ function setPose(s){
   } else {foot.visible=false;rays.visible=false;}
   if($('trail').checked&&s.z>0.05){const p=W([s.x,s.y,Math.max(0.01,s.z)]);if(!trailPts.length||trailPts[trailPts.length-1].distanceTo(p)>0.03){trailPts.push(p);if(trailPts.length>3000)trailPts.shift();trail.geometry.dispose();trail.geometry=new THREE.BufferGeometry().setFromPoints(trailPts);}}
 }
-let ws,phase='',seg=0,t=0,fps=0;
+let ws,phase='',seg=0,t=0,fps=0,role='';
+$('restart').onclick=()=>{
+  if(!ws||ws.readyState!==1){$('msg').textContent='not connected';return;}
+  if(role!=='operator'){$('msg').textContent='changing the simulation needs the operator token in the URL (?token=...)';return;}
+  const arg=`pitch=${$('pitch').value};alt=${$('alt').value};track=${$('track').value};seed=${$('seed').value}`;
+  ws.send(JSON.stringify({cmd:'sim',arg}));$('msg').textContent='restarting: '+arg;trailPts.length=0;
+  setTimeout(()=>location.reload(),2500);                                // the new course has a new floor and tags
+};
 function connect(){
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'+q);
   ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data);}catch(e){return;}
+    if(m.role)role=m.role;
     if(m.phase!==undefined){phase=m.phase;seg=m.seg;t=m.t;fps=m.fps;}
     if(m.sim){if(phase==='TAKEOFF'&&trailPts.length>50&&t<1)trailPts.length=0;setPose(m.sim);}
     if(m.error)$('msg').textContent=m.error;};
