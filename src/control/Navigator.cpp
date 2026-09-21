@@ -310,7 +310,8 @@ bool Navigator::pursuitTarget(const LineObservation& line, double& tx, double& t
 void Navigator::step(const Observation& obs, const TelloState& st) {
     now_ = clock_.now();
     lastStep_ = now_;
-    blindZone_ = obs.blindZoneM > 0 && obs.blindZoneM < 5 ? obs.blindZoneM : blindZone_;
+    // a steep mirror view (>= 70 deg) sees the floor under and slightly behind the drone: blind zone 0, not "unknown"
+    if (obs.blindZoneM < 5) blindZone_ = std::max(0.0, obs.blindZoneM);
     updateAnchor(st);
     if (now_ < blindUntil_ && phase_ != Phase::Idle && !finished()) {
         // video latency: the first frames after a blocking command still show the view from before it

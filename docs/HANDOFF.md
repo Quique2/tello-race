@@ -26,6 +26,21 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-21 (laptop) steep mirror views fixed; mirror holder settled (open underside, 36 deg, 13 up / 25 down)
+* Bug: with the camera looking 70 deg or steeper the bottom of the image sees the floor under/behind the drone;
+  the projector reported "no ground" (1e9) and the navigator kept its default 0.8 m blind zone, so it behaved as
+  if the nearest 80 cm were invisible. Sim at 1.5 m went 0/10 at 70 deg. Fixed in CameraModel (blind zone 0 when
+  the bottom ray lands at/behind the drone) and Navigator (clamp instead of ignore). Now 1.5 m: 67 deg 10/10
+  (46.9 s), 70 deg 10/10, 74 deg 10/10; stock 50 cm 10/10. The measured mirror (68-69 deg) plus forward pitch in
+  flight is inside that range.
+* Mirror holder: the pane goes on the UNDERSIDE of the sloped plate (the face that looks at the lens). Final
+  print: `Tello_Mirror_Clip_2_ext5_36deg_open.STL` (generator open_mirror_clip.py 5 36 25 13 28): arms +5 mm,
+  36 deg plate 13 mm up-slope past the bar and 25 mm down, bar removed across 29 mm so nothing crosses the pane's
+  path. Real frames: sharp, full coverage, tag decoded at the frame edge, calib pitch 68-69 flat. Also added
+  `camera.blank_top_px` (paints image rows a short pane does not cover; 0 = off, not needed with this holder).
+* First hover tests done 2026-09-20 with the user flying from the page: link -30..-50 dBm, 24 fps, battery sags
+  ~1 %/3 s at hover, board 65-77 C (power off between flights). The climb to 1.2/1.5 m is still to do.
+
 ### 2026-09-20 19:30 (laptop) altitude navigator: 1.5 m with the 67 deg mirror view now flies random courses (19/20)
 * Decision from the user: the belly camera is not used inside a run (front/belly switch takes 5-8 s), and the net is
   believed higher than 2.5 m, so the race plan is the mirror at ~67 deg with the drone at **1.5 m**

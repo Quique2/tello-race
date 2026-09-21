@@ -60,9 +60,12 @@ double GroundProjector::horizonRow(double u) const {
 }
 
 double GroundProjector::blindZoneX() const {
-    double X, Y;
-    if (!pixelToGround(K_.cx, K_.height - 1, X, Y)) return 1e9;
-    return X;
+    // distance ahead where the visible floor starts; 0 when the bottom of the image already looks at the floor
+    // under or behind the drone (steep mirror view), 1e9 when it does not reach the floor at all
+    cv::Vec3d d = pixelRayBody(K_.cx, K_.height - 1);
+    if (d[2] > -1e-3) return 1e9;
+    double X = -H_ / d[2] * d[0];
+    return X > 0.0 ? std::min(X, 1e9) : 0.0;
 }
 
 double GroundProjector::metersPerPixel(double u, double v) const {

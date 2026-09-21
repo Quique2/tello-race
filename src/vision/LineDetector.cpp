@@ -125,7 +125,7 @@ bool LineDetector::scanBands(const GroundProjector& proj, const LineObservation*
     // With a hint (the expected start of the next segment, 80 cm past the tag) start scanning shortly before it.
     // From a steep camera at altitude the blind zone is a few centimetres, and the tail of the segment just
     // finished lies right under the drone: scanning from the blind zone would lock the chain onto that stub.
-    double startX = blind + p_.bandStartM;
+    double startX = std::max(0.0, blind) + p_.bandStartM;   // the camera may see behind the drone: scan from under it
     if (hint) startX = std::max(startX, hint->x - 0.35);
     for (int i = 0; i < p_.bands; ++i) {
         double X = startX + i * p_.bandStepM;
