@@ -607,6 +607,9 @@ void Navigator::doFollow(const Observation& obs, const TelloState& st) {
             }
         } else {
             if (tag_.X < approachDist()) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "tag within approach distance"); return; }
+            // the visible line ends at this tag: the rest of the way is straight in, no need to creep closer first
+            bool lineEndsAtTag = obs.line.valid && obs.line.endVisible && std::hypot(obs.line.endX - tag_.X, obs.line.endY - tag_.Y) < p_.tagEndAssocM;
+            if (lineEndsAtTag && tag_.X < approachDist() + 0.7) { pendingDir_ = tag_.id; setPhase(Phase::TagApproach, "line ends at the tag"); return; }
             double span = std::max(0.2, p_.tagSlowDistM);            // slow down over this distance before the approach point
             vScale = mu::clamp((tag_.X - approachDist()) / span, 0.35, 1.0);
         }
