@@ -600,7 +600,9 @@ void Navigator::doFollow(const Observation& obs, const TelloState& st) {
                         (!endYawValid_ && (std::fabs(lastLine_.headingDeg) > p_.curvedApproachDeg || std::fabs(lastLine_.curvature) > 0.8));
             // Default: FORWARD tags get the same precise maneuver as the others (go over the tag, face the line end
             // direction, step back, acquire the segment that starts 80 cm ahead). The fast coast is a speed option.
-            if (tag_.X < approachDist() && tag_.X > blindZone_ + 0.2 && (bend || !p_.forwardFastPath)) {
+            bool lineEndsAtTag = obs.line.valid && obs.line.endVisible && std::hypot(obs.line.endX - tag_.X, obs.line.endY - tag_.Y) < p_.tagEndAssocM;
+            double trigger = lineEndsAtTag ? approachDist() + 0.7 : approachDist();   // the visible line ends here: approach now
+            if (tag_.X < trigger && tag_.X > blindZone_ + 0.2 && (bend || !p_.forwardFastPath)) {
                 pendingDir_ = 1;
                 setPhase(Phase::TagApproach, bend ? "FORWARD tag after a bend: precise maneuver" : "FORWARD tag: precise maneuver");
                 return;

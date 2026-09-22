@@ -26,6 +26,25 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-09-22 (laptop) precise line following to the tag; live 3D simulation page; web robustness fix
+* Navigator now follows the line right up to the tag with the mirror view (approach distance automatic =
+  blind zone + 0.3 m, so ~0.35 m at 1.5 m; a forward camera keeps 1.4 m because it cannot see closer). The
+  line-end direction is frozen once the tag is closer than 0.45 m (measured on the approach), the slow-down is
+  measured before the approach point (`follow.tag_slow_dist_m = 0.5`), and a tag whose line end is in view is
+  approached at once (also FORWARD tags, whose trigger window was a 10 cm slit from altitude). The simulator
+  reports "path dev mean/max" per episode (distance to the nearest line point; ~0.4 m max is the floor from the
+  80 cm gaps, which no drone can be closer to than 0.4 m). Final: 68 deg / 1.5 m seeds 300-319 19/20 (46.3 s)
+  and 320-339 19/20 (46.5 s), typical deviation mean 0.06-0.09 m max 0.40-0.43 m; example course 43.3 s
+  (was 47); stock 50 cm 10/10 (48.2 s). Before this work the drone left the line 1.4 m before every tag with
+  deviation mean 0.12 max 0.52.
+* Web: `/sim3d` shows a running simulation in 3D (floor texture, tags, Tello model, camera footprint, trail)
+  with a panel to change camera angle / altitude / course / seed live (operator token). `web command sim`.
+  Blocking go/turn commands are paced and streamed (no more teleporting in the views).
+* **Ground station fix that matters for the real drone**: a websocket write to a browser that vanished
+  (reload, phone asleep) blocked the control loop for up to 30 s. Socket write timeout now 2 s and a client
+  whose write fails is dropped. Pi must rebuild.
+* Simulator noise is now seeded per episode (batch and single runs agree exactly).
+
 ### 2026-09-21 (laptop) steep mirror views fixed; mirror holder settled (open underside, 36 deg, 13 up / 25 down)
 * Bug: with the camera looking 70 deg or steeper the bottom of the image sees the floor under/behind the drone;
   the projector reported "no ground" (1e9) and the navigator kept its default 0.8 m blind zone, so it behaved as
