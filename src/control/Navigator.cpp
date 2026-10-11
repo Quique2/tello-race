@@ -65,6 +65,12 @@ void NavParams::load(const Config& c) {
 
 Navigator::Navigator(IDrone& drone, IClock& clock, const Config& cfg) : drone_(drone), clock_(clock) {
     p_.load(cfg);
+    cp_.load(cfg);
+    cs_.gain = cp_.rcGain;
+    courseMode_ = Perception::courseMode(cfg);
+    if (courseMode_)
+        LOG_INFO("Navigator: course mode (camera looks down): follow the tape, tags in order %s, cruise %.2f m/s, height %.0f cm",
+                 cfg.getString("course.tag_order", "1,2,3,4").c_str(), cp_.vCruise, p_.altitudeCm);
     slewLr_.rate = slewFb_.rate = slewUd_.rate = slewYaw_.rate = p_.rcSlew;
 }
 
@@ -85,7 +91,18 @@ const char* Navigator::phaseName(Phase p) {
     }
     return "?";
 }
-const char* Navigator::phaseName() const { return phaseName(phase_); }
+const char* Navigator::phaseName() const {
+    if (courseMode_) {
+        switch (phase_) {
+            case Phase::Acquire: return "FIND_LINE";
+            case Phase::GapCoast: return "TO_NEXT_LINE";
+            case Phase::Search: return "SEEK_NEXT";
+            case Phase::TagManeuver: return "MEASURE_MIRROR";
+            default: break;
+        }
+    }
+    return phaseName(phase_);
+}
 
 void Navigator::setPhase(Phase ph, const char* why) {
     char buf[200];
@@ -102,6 +119,11 @@ double Navigator::missionTime() const { return missionStart_ > 0 ? now_ - missio
 
 std::string Navigator::status() const {
     char buf[256];
+    if (courseMode_) {
+        snprintf(buf, sizeof(buf), "%s  tags=%d/%zu  next=ID%d  t=%.1fs  v=%.2fm/s  rc=[%d %d %d %d]", phaseName(), segmentsDone_,
+                 cp_.order.size(), nextTagId(), missionTime(), speedMs(), rc_.lr, rc_.fb, rc_.ud, rc_.yaw);
+        return buf;
+    }
     snprintf(buf, sizeof(buf), "%s  seg=%d  t=%.1fs  tag=%s%d(%d) X=%.2f  rc=[%d %d %d %d]", phaseName(), segmentsDone_,
              missionTime(), tag_.confirmed ? "*" : "", tag_.id, tag_.count, tag_.X, rc_.lr, rc_.fb, rc_.ud, rc_.yaw);
     return buf;
@@ -124,6 +146,8 @@ void Navigator::requestLand() { landRequested_ = true; }
 
 void Navigator::release() {
     now_ = clock_.now();
+    courseRoute.clear();
+    courseWaypoint = -1;
     if (phase_ != Phase::Idle && !finished()) { hover(true); setPhase(Phase::Idle, "released to manual control"); }
     landRequested_ = false;
     turning_ = false;
@@ -326,6 +350,7 @@ bool Navigator::pursuitTarget(const LineObservation& line, double& tx, double& t
 void Navigator::step(const Observation& obs, const TelloState& st) {
     now_ = clock_.now();
     lastStep_ = now_;
+    if (courseMode_) { stepCourse(obs, st); return; }
     // a steep mirror view (>= 70 deg) sees the floor under and slightly behind the drone: blind zone 0, not "unknown"
     if (obs.blindZoneM < 5) blindZone_ = std::max(0.0, obs.blindZoneM);
     updateAnchor(st);

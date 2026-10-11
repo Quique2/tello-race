@@ -14,6 +14,11 @@ static cv::Scalar scalarFromList(const Config& cfg, const std::string& key, cv::
 void LineParams::load(const Config& cfg) {
     procWidth = cfg.getInt("line.proc_width", procWidth);
     colorMode = toLower(cfg.getString("line.color_mode", colorMode));
+    blueLo = scalarFromList(cfg, "line.blue_lo", blueLo);
+    blueHi = scalarFromList(cfg, "line.blue_hi", blueHi);
+    yellowLo = scalarFromList(cfg, "line.yellow_lo", yellowLo);
+    yellowHi = scalarFromList(cfg, "line.yellow_hi", yellowHi);
+    whiteDilateCm = cfg.getDouble("line.white_dilate_cm", whiteDilateCm);
     darkVMax = cfg.getInt("line.dark_v_max", darkVMax);
     darkSMax = cfg.getInt("line.dark_s_max", darkSMax);
     hsvLo1 = scalarFromList(cfg, "line.hsv_lo", hsvLo1);
@@ -23,6 +28,7 @@ void LineParams::load(const Config& cfg) {
     whiteCheck = cfg.getBool("line.white_check", whiteCheck);
     whiteSMax = cfg.getInt("line.white_s_max", whiteSMax);
     whiteVMin = cfg.getInt("line.white_v_min", whiteVMin);
+    whiteAuto = cfg.getBool("line.white_auto", whiteAuto);
     whiteDilatePx = cfg.getInt("line.white_dilate_px", whiteDilatePx);
     minWidthCm = cfg.getDouble("line.min_width_cm", minWidthCm);
     maxWidthCm = cfg.getDouble("line.max_width_cm", maxWidthCm);
@@ -36,6 +42,13 @@ void LineParams::load(const Config& cfg) {
     maxJumpCm = cfg.getDouble("line.max_jump_cm", maxJumpCm);
     horizonMarginPx = cfg.getInt("line.horizon_margin_px", horizonMarginPx);
     tagMaskDilatePx = cfg.getInt("line.tag_mask_dilate_px", tagMaskDilatePx);
+}
+
+bool LineDetector::setColor(const std::string& name) {
+    std::string n = toLower(name);
+    if (n != "dark" && n != "hsv" && n != "blue" && n != "yellow") return false;
+    p_.colorMode = n;
+    return true;
 }
 
 bool LineObservation::lateralAt(double X, double& Y) const {
@@ -67,7 +80,33 @@ void LineDetector::buildMask(const cv::Mat& bgr, const GroundProjector& proj,
     else cv::resize(bgr, proc, cv::Size(), scale_, scale_, cv::INTER_AREA);
     cv::cvtColor(proc, hsv_, cv::COLOR_BGR2HSV);
 
-    if (p_.colorMode == "hsv") {
+    // The brightest unsaturated surface in sight is the white one. When the camera exposes it darker than expected,
+    // the brightness limits follow it down (never up).
+    int vMinWhite = p_.whiteVMin;
+    double expo = 1.0;
+    whiteLevel_ = 0;
+    if (p_.whiteCheck && p_.whiteAuto) {
+        int hist[256] = {0}, total = 0;
+        for (int y = 0; y < hsv_.rows; y += 4) {
+            const cv::Vec3b* row = hsv_.ptr<cv::Vec3b>(y);
+            for (int x = 0; x < hsv_.cols; x += 4)
+                if (row[x][1] <= p_.whiteSMax) { ++hist[row[x][2]]; ++total; }
+        }
+        if (total > 200) {
+            int acc = 0, v95 = 255;
+            for (int v = 255; v >= 0; --v) { acc += hist[v]; if (acc >= total / 20) { v95 = v; break; } }
+            vMinWhite = std::min(vMinWhite, std::max(60, (int)std::lround(0.72 * v95)));   // 72 %: a grey floor stays out
+            whiteLevel_ = v95;
+            expo = std::min(1.0, v95 / 210.0);
+        }
+    }
+    auto darker = [&](cv::Scalar lo) { lo[2] = std::max(12.0, lo[2] * expo); return lo; };
+
+    if (p_.colorMode == "blue") {
+        cv::inRange(hsv_, darker(p_.blueLo), p_.blueHi, mask_);
+    } else if (p_.colorMode == "yellow") {
+        cv::inRange(hsv_, darker(p_.yellowLo), p_.yellowHi, mask_);
+    } else if (p_.colorMode == "hsv") {
         cv::inRange(hsv_, p_.hsvLo1, p_.hsvHi1, mask_);
         if (p_.hsvRange2) {
             cv::Mat m2;
@@ -78,9 +117,19 @@ void LineDetector::buildMask(const cv::Mat& bgr, const GroundProjector& proj,
         cv::inRange(hsv_, cv::Scalar(0, 0, 0), cv::Scalar(180, p_.darkSMax, p_.darkVMax), mask_);
     }
     if (p_.whiteCheck) {
-        cv::inRange(hsv_, cv::Scalar(0, 0, p_.whiteVMin), cv::Scalar(180, p_.whiteSMax, 255), white_);
-        int k = 2 * p_.whiteDilatePx + 1;
-        cv::dilate(white_, white_, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(k, k)));
+        whiteVUsed_ = vMinWhite;
+        cv::inRange(hsv_, cv::Scalar(0, 0, vMinWhite), cv::Scalar(180, p_.whiteSMax, 255), white_);
+        int reach = p_.whiteDilatePx;
+        if (p_.whiteDilateCm > 0) {   // a wide tape seen from close by: its middle is further from the white than a few pixels
+            cv::Vec3d ray = proj.pixelRayBody(proj.K().cx, proj.K().cy);
+            if (ray[2] < -0.05) {
+                double mPerPx = (proj.height() / -ray[2]) / (proj.K().fx * scale_);
+                reach = std::max(reach, std::min(120, (int)std::lround(p_.whiteDilateCm / 100.0 / mPerPx)));
+            }
+        }
+        int k = 2 * reach + 1;
+        // a box is dilated in constant time per pixel whatever its size; the round one only pays off when small
+        cv::dilate(white_, white_, cv::getStructuringElement(k > 31 ? cv::MORPH_RECT : cv::MORPH_ELLIPSE, cv::Size(k, k)));
         mask_ &= white_;
     }
     if (p_.morphOpen > 1)

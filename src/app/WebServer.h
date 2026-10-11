@@ -97,6 +97,10 @@ struct StateSnapshot {
     std::string mirror = "none";   // camera.flip in effect
     int noticeId = 0;
     std::vector<std::string> events;
+    std::string lineColor = "dark";           // tape colour being followed: dark | blue | yellow | hsv
+    bool course = false;                      // course mode (camera looking down)
+    int nextTag = 0;                          // next tag to fly over (course mode)
+    double speed = 0;                         // modelled ground speed, m/s (course mode)
     bool sim = false;                         // simulator truth for the 3D page
     double simX = 0, simY = 0, simZ = 0, simYaw = 0, camPitch = 0;
 };

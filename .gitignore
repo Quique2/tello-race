@@ -10,3 +10,7 @@ tags/
 *.user
 CMakeUserPresets.json
 __pycache__/
+# written at run time: what the tags showed about the mirror and the drone (see docs/COURSE_TEC.md)
+config/learned_*.ini
+# check picture of tools/course_from_photo.py (regenerated with the course)
+courses/*/debug.png

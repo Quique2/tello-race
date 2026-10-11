@@ -11,6 +11,7 @@
 struct MissionOptions {
     std::string configPath = "config/default.ini";
     std::vector<std::string> overrides;      // section.key=value
+    std::vector<std::string> profiles;       // extra .ini files laid over the main one (a course, a mirror, ...)
     std::string source = "udp";              // udp | file:<path> | camera:<n>
     bool sim = false;
     std::string track = "random";            // random | example

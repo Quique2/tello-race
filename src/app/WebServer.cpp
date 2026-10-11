@@ -244,13 +244,16 @@ std::string stateToJson(const StateSnapshot& s) {
         ev += (ev.empty() ? "\"" : ",\"") + esc(s.events[i]) + "\"";
     char simBuf[256] = "";
     if (s.sim) snprintf(simBuf, sizeof(simBuf), ",\"sim\":{\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,\"yaw\":%.1f,\"camPitch\":%.1f}", s.simX, s.simY, s.simZ, s.simYaw, s.camPitch);
-    char buf[2560];
+    char courseBuf[160];
+    snprintf(courseBuf, sizeof(courseBuf), ",\"lineColor\":\"%s\",\"course\":%s,\"nextTag\":%d,\"speed\":%.2f", esc(s.lineColor).c_str(),
+             s.course ? "true" : "false", s.nextTag, s.speed);
+    char buf[2816];
     snprintf(buf, sizeof(buf),
              "{\"phase\":\"%s\",\"seg\":%d,\"t\":%.1f,\"telemetry\":%s,\"bat\":%d,\"tof\":%d,\"h\":%d,\"yaw\":%d,\"pitch\":%d,"
              "\"roll\":%d,\"templ\":%d,\"temph\":%d,\"fps\":%.1f,\"camera\":\"%s\",\"recording\":%s,\"drone\":\"%s\","
-             "\"mode\":\"%s\",\"flying\":%s,\"tag\":%d,\"tagX\":%.2f,\"mirror\":\"%s\",\"noticeId\":%d,\"notice\":\"%s\",\"wifi\":%d,\"rcAge\":%.1f,\"stale\":%s,\"rc\":[%d,%d,%d,%d],\"events\":[%s]%s}",
+             "\"mode\":\"%s\",\"flying\":%s,\"tag\":%d,\"tagX\":%.2f,\"mirror\":\"%s\",\"noticeId\":%d,\"notice\":\"%s\",\"wifi\":%d,\"rcAge\":%.1f,\"stale\":%s,\"rc\":[%d,%d,%d,%d],\"events\":[%s]%s%s}",
              s.phase, s.seg, s.t, s.telemetry ? "true" : "false", s.bat, s.tof, s.h, s.yaw, s.pitch, s.roll, s.templ, s.temph, s.fps,
              s.belly ? "belly" : "front", s.recording ? "true" : "false", s.drone, s.manual ? "manual" : "mission", s.flying ? "true" : "false", s.tagId, s.tagX, s.mirror.c_str(), s.noticeId, s.notice.c_str(), s.wifi, s.rcAge, s.stale ? "true" : "false", s.rc[0], s.rc[1], s.rc[2], s.rc[3],
-             ev.c_str(), simBuf);
+             ev.c_str(), courseBuf, simBuf);
     return buf;
 }

@@ -25,6 +25,7 @@ for(const [id,d] of [['bFlipF','f'],['bFlipB','b'],['bFlipL','l'],['bFlipR','r']
 bind('mMission',()=>send('mode','mission'));bind('mManual',()=>{if(send('mode','manual'))msg('manual mode: TAKE OFF, then keys W/S A/D R/F Q/E or the pads');});
 $('resume').onchange=e=>send('tag',e.target.value);
 $('mirror').onchange=e=>send('mirror',e.target.value);
+for(const [id,c] of [['cBlue','blue'],['cYellow','yellow'],['cDark','dark']])bind(id,()=>send('linecolor',c));
 $('spd').oninput=e=>{$('spdv').textContent=e.target.value;};
 /* manual sticks: keyboard + on-screen pads, sent at 10 Hz while active, one zero when released */
 const key={w:0,s:0,a:0,d:0,r:0,f:0,q:0,e:0};let padL={x:0,y:0},padR={x:0,y:0},lastSent='';
@@ -64,6 +65,8 @@ function connect(){const proto=location.protocol==='https:'?'wss://':'ws://';ws=
   $('h').textContent=m.telemetry?(m.tof+' cm'):'-';$('temp').textContent=m.telemetry?(m.templ+'-'+m.temph+' C'):'-';
   $('fps').textContent=m.fps.toFixed(1)+' fps';$('tag').textContent=m.tag>0?('ID'+m.tag+' @ '+m.tagX.toFixed(2)+' m'):'-';
   if(m.mirror!==undefined&&document.activeElement!==$('mirror'))$('mirror').value=m.mirror;
+  if(m.lineColor!==undefined){for(const [id,c] of [['cBlue','blue'],['cYellow','yellow'],['cDark','dark']])$(id).classList.toggle('sel',m.lineColor===c);
+   $('colHint').textContent=m.course?('course mode: next tag ID'+m.nextTag+', speed '+m.speed.toFixed(2)+' m/s'):'the route the drone is following is drawn on the video in this colour';}
   if(m.noticeId!==undefined){if(lastNoticeId<0)lastNoticeId=m.noticeId||0;else if(m.noticeId!==lastNoticeId){lastNoticeId=m.noticeId;if(m.notice)msg(m.notice);}}
   const mf=(m.mode==='manual'&&m.flying),st=!!(m.stale&&mf);const L=$('link');
   L.textContent=(m.wifi?m.wifi+' dBm':'-')+(mf?(st?' / STICKS RELEASED':' / input '+(m.rcAge>=0?m.rcAge.toFixed(1)+'s':'none')):'');L.classList.toggle('low',st);

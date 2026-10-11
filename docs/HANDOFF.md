@@ -26,6 +26,52 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-10-11 (laptop) course mode: follow the tape from above with the ORIGINAL mirror clip; blue/yellow switch; self-calibration
+* **What changed for the user.** He flies the original clip again (`Tello_Mirror_Clip_2.STL`, camera straight
+  down, 96-99 deg) on a new course: white tarp, blue path, yellow decoy tapes, tags 1-2-3-4 where the tag turn
+  meanings do NOT hold. New profile `config/course_tec.ini` (`--profile`, laid over default.ini) switches to a
+  second navigator, `nav.mode = course` (`src/control/NavigatorCourse.cpp`, `src/vision/PathTracer.cpp`): the
+  tape is traced top-down into metric centre-lines, the drone follows it holonomically at a fixed heading (no
+  turns), flies over the tags in `course.tag_order`, takes the nearest other tape end as the next segment and
+  lands on tag 4. Full description, first-flight checklist and numbers: **docs/COURSE_TEC.md**. The old
+  line-ahead navigator is untouched (example course and seeds 300-319 give the same result to 0.1 s as before).
+* **Page**: panel "Path to follow" with BLUE / YELLOW / BLACK (web command `linecolor`, refused while the mission
+  flies), label and followed route drawn on the video, next tag and speed in the hint. State JSON has
+  `lineColor`, `course`, `nextTag`, `speed`.
+* **Simulation** on the photographed course (`courses/tec_tarp`, made by `tools/course_from_photo.py` from
+  `courses/tec_tarp_photo.jpg`): first flight 20/20 in 29.8 s, later flights (everything learned) 20/20 in
+  26.5 s, path error 2 cm mean / 6-8 cm at the worst moment, tags passed 2-3 cm from their centre. Altitude
+  1.2 m (sweep in the doc). `config/course_tec_fast.ini` is a second profile for later: 23.1 s.
+* **Self-calibration, new.** The mirror angle is fitted from where the tags are in space (floor-plane fit, one
+  scale per tag), not from the tilt of a single tag any more (that read 3 deg high). On the first flight the
+  drone moves a hand-span around tag 1 for ~5 s to get it; the same fit shows which way the telemetry counts
+  pitch and roll (lean left out of the floor model until then) and the stick gain is measured from the tags.
+  All of it is written to `config/learned_course_tec.ini` after landing (git-ignored, read at the next start).
+  **Delete that file after the clip is re-seated.** It is also written when the drone is held by hand over a tag.
+* **Ground-station load**: tags are searched in small windows (tracked tags + dark squares) and the whole frame
+  only once a second; tag search every other frame; tape work at half width; 10 fps while nothing flies
+  (`mission.idle_fps`). On the laptop the vision per frame went to about a fifth.
+* **Needed from the Pi side** (the Pi was unreachable from the laptop on 2026-10-11: cable down, Tailscale
+  offline, so nothing was deployed):
+  1. `git pull` (or the bundle), `cmake --build --preset linux-release`.
+  2. In `~/.config/drone-watch.env` add `--profile config/course_tec.ini` to `GROUND_STATION_ARGS` (keep the
+     rest). Without it the station behaves exactly as before.
+  3. Measure the vision on the Pi, no drone needed:
+     `./build/tello_race sim --headless --no-realtime --profile config/course_tec.ini --track courses/tec_tarp --episodes 1 --seed 1 | grep "vision cost"`
+     and once more with `--set tag.windows=0 --set tag.every_n_frames=1 --set line.proc_width=640` (the old way).
+     Put both numbers here.
+  4. Still valid: the Pi session never sends flight commands; the user starts the mission from the page.
+* **Not verified on the real drone** (all handled in software, none seen in reality yet): telemetry pitch/roll
+  signs, stick gain and response time (`course.response_tau_s = 0.5` is a careful guess), how the camera renders
+  the white tarp and the blue tape (`line.white_auto` follows the exposure; the hue limits are from the photo),
+  hover drift over a plain white tarp. `course.trace_hz = 5` writes a `CRS` line five times a second at debug
+  level: after a real flight that log shows what the navigator saw and commanded.
+* Other new keys: `tag.windows`, `tag.full_frame_every_s`, `ground.attitude_delay_s`, `ground.height_from_tags`,
+  `ground.learned_file`, `ground.mount_verified`, `ground.imu_signs_verified`, `line.white_auto`,
+  `tello.video_fps / video_bitrate / video_resolution` (SDK 3.0 video settings, empty = untouched, untested on the
+  drone), and the `[course]` section. Simulator: `sim.lean_deg_per_ms2`, `sim.tof_scale`, `sim.focal_scale`,
+  `sim.rc_deadband`, `sim.image_gain`, `sim.start_yaw_offset_deg`.
+
 ### 2026-09-22 (laptop) precise line following to the tag; live 3D simulation page; web robustness fix
 * Navigator now follows the line right up to the tag with the mirror view (approach distance automatic =
   blind zone + 0.3 m, so ~0.35 m at 1.5 m; a forward camera keeps 1.4 m because it cannot see closer). The

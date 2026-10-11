@@ -80,6 +80,7 @@ private:
     std::string stateJson(const Observation& obs, const TelloState& st, double fps);
     void applyWebCommand(const WebCommand& c);
     void setManual(bool on);
+    void setLineColor(const std::string& name);
 
     IDrone& drone_;
     IFrameSource& src_;
@@ -113,9 +114,57 @@ private:
         flipName_ = flipCode_ == 2 ? "none" : f;
     }
     double percMs_ = 0, iterMs_ = 0, tagMsAcc_ = 0, lineMsAcc_ = 0; int perfN_ = 0; double lastSlowLog_ = 0;
+    double totTagMs_ = 0, totLineMs_ = 0, totPercMs_ = 0; long totFrames_ = 0, totTagRuns_ = 0;   // whole run: what the vision costs
+public:
+    // mean cost of the vision per processed frame over the whole run (ms): everything, tag detector, tape
+    void visionCost(double& all, double& tag, double& line) const {
+        all = totFrames_ ? totPercMs_ / totFrames_ : 0; tag = totFrames_ ? totTagMs_ / totFrames_ : 0; line = totFrames_ ? totLineMs_ / totFrames_ : 0;
+    }
+    Perception::Calib calib() const { return perception_.calib(); }
+    double rcGain() const { return nav_.rcGain(); }
+private:
+    // What this flight showed about the mirror and the drone, kept for the next start (ground.learned_file).
+    void saveLearned() {
+        const std::string path = cfg_.getString("ground.learned_file", "");
+        if (path.empty() || !nav_.courseMode()) return;
+        const Perception::Calib cal = perception_.calib();
+        const bool mount = cal.applied && cal.samples >= 60;
+        const bool gain = nav_.rcGainMeasured();
+        if (!mount && !gain && !perception_.pitchSignKnown() && !perception_.rollSignKnown()) return;
+        Config keep;                                   // what an earlier flight found stays unless this one found it again
+        keep.loadFile(path, nullptr);
+        char buf[64];
+        if (mount) {
+            snprintf(buf, sizeof(buf), "%.2f", cal.pitchDeg); keep.set("camera.pitch_deg", buf);
+            snprintf(buf, sizeof(buf), "%.2f", cal.rollDeg); keep.set("camera.roll_deg", buf);
+            keep.set("ground.mount_verified", "1");
+        }
+        if (perception_.pitchSignKnown()) keep.set("ground.imu_pitch_sign", perception_.imuPitchSign() < 0 ? "-1" : "1");
+        if (perception_.rollSignKnown()) keep.set("ground.imu_roll_sign", perception_.imuRollSign() < 0 ? "-1" : "1");
+        if (perception_.pitchSignKnown() && perception_.rollSignKnown()) keep.set("ground.imu_signs_verified", "1");
+        if (gain) { snprintf(buf, sizeof(buf), "%.4f", nav_.rcGain()); keep.set("course.rc_gain_ms", buf); }
+        std::ofstream f(path);
+        if (!f) { LOG_WARN("could not write %s", path.c_str()); return; }
+        f << "# Written by tello_race after a flight: what the tags showed about the camera mirror and the drone.\n"
+          << "# It is laid over the configuration at the next start. Delete it after changing the mirror clip or the drone.\n";
+        std::string section;
+        for (const auto& kv : keep.all()) {
+            const size_t dot = kv.first.find('.');
+            if (dot == std::string::npos) continue;
+            if (kv.first.substr(0, dot) != section) { section = kv.first.substr(0, dot); f << "\n[" << section << "]\n"; }
+            f << kv.first.substr(dot + 1) << " = " << kv.second << "\n";
+        }
+        LOG_INFO("kept for the next flight (%s): camera pitch %s roll %s deg, stick gain %s", path.c_str(),
+                 keep.getString("camera.pitch_deg", "-").c_str(), keep.getString("camera.roll_deg", "-").c_str(),
+                 keep.getString("course.rc_gain_ms", "-").c_str());
+    }
     std::string notice_;   // last one-line message for the page (shown once per id)
     int noticeId_ = 0;
     bool prevFlying_ = false;
+    double idleFps_ = 0, lastIdleFrame_ = -1e9;   // mission.idle_fps: pictures per second looked at while on the ground
+    double lastLearnedT_ = 0;
+    bool mountWarned_ = false;
+    int lastLearnedSamples_ = -1;
     void notice(const std::string& t) { notice_ = t; ++noticeId_; LOG_INFO("notice: %s", t.c_str()); }
     int wifiDbm_ = 0;      // drone link as seen by the ground station, dBm (0 = unknown)
     std::string wifiIfname_ = "auto";   // tello.wifi_ifname
@@ -131,6 +180,7 @@ int MissionLoop::run() {
     if (!sim_) {
         wifiIfname_ = cfg_.getString("tello.wifi_ifname", "auto");
         setFlip(cfg_.getString("camera.flip", "none"));
+        idleFps_ = cfg_.getDouble("mission.idle_fps", 10.0);
         if (flipCode_ != 2) LOG_INFO("camera.flip = %s: live frames are flipped before perception (mirror mount)", flipName_.c_str());
         blankTopPx_ = std::max(0, cfg_.getInt("camera.blank_top_px", 0));
         if (blankTopPx_ > 0) LOG_INFO("camera.blank_top_px = %d: the top rows are painted white (image beyond the mirror pane)", blankTopPx_);
@@ -201,6 +251,16 @@ int MissionLoop::run() {
         while (webOn_ && web_->popCommand(wc)) applyWebCommand(wc);
         double tIter0 = wall.now();
         bool got = src_.latest(frame, seq_, 0.25);
+        // On the ground with nothing flying a few pictures a second are plenty: the others are dropped unprocessed
+        // (the vision and the page video are most of what the ground station computes).
+        if (got && idleFps_ > 0 && !sim_ && !nav_.flying() && !drone_.isFlying()) {
+            if (wall.now() - lastIdleFrame_ < 1.0 / idleFps_) {
+                seq_ = frame.seq; lastFrameWall = wall.now();
+                got = false;
+            } else {
+                lastIdleFrame_ = wall.now();
+            }
+        }
         if (got && flipCode_ != 2) cv::flip(frame.image, frame.image, flipCode_);   // mirror mount: un-mirror before perception
         if (got && blankTopPx_ > 0 && blankTopPx_ < frame.image.rows)                 // short pane: those rows see past the mirror
             frame.image(cv::Rect(0, 0, frame.image.cols, blankTopPx_)).setTo(cv::Scalar(255, 255, 255));
@@ -221,7 +281,13 @@ int MissionLoop::run() {
         // (unspecified evaluation order), so the detector always got a (0,0) hint.
         bool haveHint = nav_.lineHint(hx, hy);
         perception_.setLineHint(haveHint, hx, hy);
-        if (got) { double tp = wall.now(); obs = perception_.process(frame.image, st, frame.stamp, frame.seq); percMs_ += (wall.now() - tp) * 1000; iterMs_ += (wall.now() - tIter0) * 1000; tagMsAcc_ += obs.tagMs; lineMsAcc_ += obs.lineMs; ++perfN_; }
+        if (got) {
+            double tp = wall.now();
+            obs = perception_.process(frame.image, st, frame.stamp, frame.seq);
+            const double pm = (wall.now() - tp) * 1000;
+            percMs_ += pm; iterMs_ += (wall.now() - tIter0) * 1000; tagMsAcc_ += obs.tagMs; lineMsAcc_ += obs.lineMs; ++perfN_;
+            totPercMs_ += pm; totTagMs_ += obs.tagMs; totLineMs_ += obs.lineMs; ++totFrames_;
+        }
         else { obs.stamp = clock_.now(); obs.blindZoneM = perception_.projector().blindZoneX(); }
         // Keep SDK mode alive while idle on the ground. Never while airborne in ANY mode: a blocking query pauses
         // the rc stream until its reply, and on a marginal link that is 3 s of dead sticks every 8 s (the rc
@@ -248,10 +314,28 @@ int MissionLoop::run() {
             if (drone_.isFlying()) drone_.rc(r0, r1, r2, r3);
         } else if (got || !sim_) {
             nav_.step(obs, st);
+            if (sim_) sim_->pauseDeviation(nav_.phase() == Phase::TagManeuver && nav_.courseMode());
         }
         if (!sim_ && wall.now() - wifiT_ > 1.0) { wifiT_ = wall.now(); wifiDbm_ = readWifiSignalDbm(wifiIfname_); }
         { bool fl = drone_.isFlying();
-          if (prevFlying_ && !fl) notice("drone is on the ground: TAKE OFF is available again");
+          if (prevFlying_ && !fl) { notice("drone is on the ground: TAKE OFF is available again"); saveLearned(); }
+          // a mirror that looks far backwards leaves the camera blind ahead of the drone: say so once
+          if (!mountWarned_ && nav_.courseMode()) {
+              const Perception::Calib cal = perception_.calib();
+              if (cal.applied && cal.samples >= 60 && (cal.pitchDeg > 103.0 || cal.pitchDeg < 84.0)) {
+                  mountWarned_ = true;
+                  char b[200];
+                  snprintf(b, sizeof(b), "mirror angle %.0f deg: the camera sees very little of the floor %s the drone. Re-seat the clip (96-99 deg expected)",
+                           cal.pitchDeg, cal.pitchDeg > 103.0 ? "ahead of" : "behind");
+                  notice(b);
+              }
+          }
+          // held by hand over the tags (no flight at all): the mirror angle found that way is kept too
+          if (!fl && !sim_ && wall.now() - lastLearnedT_ > 5.0) {
+              lastLearnedT_ = wall.now();
+              const Perception::Calib cal = perception_.calib();
+              if (cal.applied && cal.samples >= 60 && cal.samples != lastLearnedSamples_) { lastLearnedSamples_ = cal.samples; saveLearned(); }
+          }
           prevFlying_ = fl; }
         if (recording_ && got) record(frame.image, obs, st);
         if (got && ++fpsN && wall.now() - fpsT > 1.0) {
@@ -353,6 +437,7 @@ void MissionLoop::applyWebCommand(const WebCommand& c) {
         if (!sim_) notice("sim settings apply to the simulator only");
         else { simRestart_ = c.arg.empty() ? "same" : c.arg; abortEpisode_ = true; notice("simulation restarting: " + simRestart_); }
     }
+    else if (c.cmd == "linecolor") setLineColor(c.arg);
     else if (c.cmd == "camera") handleKey('v');
     else if (c.cmd == "tag") handleKey('0' + std::max(0, std::min(3, atoi(c.arg.c_str()))));
 }
@@ -391,6 +476,14 @@ bool MissionLoop::restartVideo(const char* why) {
     return false;
 }
 
+// Which tape the vision follows. Not while a mission is flying: the drone would lose its line in mid-air.
+void MissionLoop::setLineColor(const std::string& name) {
+    if (!manual_ && nav_.flying()) { notice("colour not changed: the mission is flying (land, or switch to MANUAL first)"); return; }
+    if (!perception_.lineDetector().setColor(name)) { notice("unknown tape colour '" + name + "' (blue, yellow or dark)"); return; }
+    perception_.resetTracking();
+    notice("now following the " + perception_.lineDetector().color() + " tape");
+}
+
 void MissionLoop::setManual(bool on) {
     if (on == manual_) return;
     manual_ = on;
@@ -413,6 +506,10 @@ std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st,
     s.wifi = wifiDbm_;
     s.notice = notice_; s.noticeId = noticeId_;
     s.mirror = flipName_;
+    s.lineColor = perception_.lineDetector().color();
+    s.course = nav_.courseMode();
+    s.nextTag = nav_.nextTagId();
+    s.speed = nav_.speedMs();
     if (manual_) {   // show the operator the sticks actually applied (zeros once the dead-man has fired)
         bool stale = wallNow() - manualRcT_ > 0.5;
         s.rcAge = manualRcT_ > 0 ? wallNow() - manualRcT_ : -1;
@@ -449,6 +546,9 @@ bool MissionLoop::handleKey(int key) {
         case 'e': nav_.emergencyStop(); return true;
         case 'r': if (recording_) stopRecording(); else startRecording(); return true;
         case 'm': showMask_ = !showMask_; return true;
+        case 'b': setLineColor("blue"); return true;
+        case 'y': setLineColor("yellow"); return true;
+        case 'k': setLineColor("dark"); return true;
         case 'v': {   // toggle front / belly camera (SDK 3.0 "downvision"); the stream is reopened
             auto* td = dynamic_cast<TelloDrone*>(&drone_);
             if (!td) { LOG_INFO("camera switch is only available on the real drone"); return true; }
@@ -508,6 +608,36 @@ void MissionLoop::drawHud(cv::Mat& canvas, const Observation& obs, const TelloSt
     int line = 4;
     for (size_t i = nav_.events.size() > 5 ? nav_.events.size() - 5 : 0; i < nav_.events.size(); ++i)
         put(line++, nav_.events[i].c_str(), cv::Scalar(120, 255, 120), 0.42);
+    // which tape is being followed: a label, and in course mode the route itself drawn over the tape
+    const std::string colName = perception_.lineDetector().color();
+    const cv::Scalar colBgr = colName == "blue" ? cv::Scalar(255, 120, 0) : colName == "yellow" ? cv::Scalar(0, 220, 255) : cv::Scalar(60, 60, 60);
+    {
+        std::string label = "FOLLOW " + std::string(colName == "blue" ? "BLUE" : colName == "yellow" ? "YELLOW" : colName == "dark" ? "BLACK" : "HSV");
+        int base = 0;
+        cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.6, 2, &base);
+        cv::Rect box(canvas.cols - ts.width - 22, 124, ts.width + 16, ts.height + 12);
+        cv::rectangle(canvas, box, colBgr, -1);
+        cv::rectangle(canvas, box, cv::Scalar(255, 255, 255), 1);
+        cv::putText(canvas, label, cv::Point(box.x + 8, box.y + ts.height + 5), cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                    colName == "yellow" ? cv::Scalar(0, 0, 0) : cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
+    }
+    if (haveObs && nav_.courseMode() && nav_.courseRoute.size() >= 2) {
+        std::vector<cv::Point> px;
+        for (const auto& q : nav_.courseRoute) {
+            double u, v;
+            if (perception_.projector().groundToPixel(q.x, q.y, u, v)) px.emplace_back((int)(u * s), (int)(v * s));
+        }
+        if (px.size() >= 2) {
+            cv::polylines(canvas, px, false, cv::Scalar(255, 255, 255), 7, cv::LINE_AA);   // white rim so it shows on any floor
+            cv::polylines(canvas, px, false, colBgr, 3, cv::LINE_AA);
+        }
+        int w = nav_.courseWaypoint;
+        if (w >= 0 && w < (int)nav_.courseRoute.size()) {
+            double u, v;
+            if (perception_.projector().groundToPixel(nav_.courseRoute[w].x, nav_.courseRoute[w].y, u, v))
+                cv::drawMarker(canvas, cv::Point((int)(u * s), (int)(v * s)), cv::Scalar(0, 255, 0), cv::MARKER_TILTED_CROSS, 26, 3);
+        }
+    }
     if (haveObs && nav_.haveTarget) {
         double u, v;
         if (perception_.projector().groundToPixel(nav_.targetX, nav_.targetY, u, v))
@@ -570,6 +700,18 @@ bool openLiveSource(const Config& cfg, const MissionOptions& opt, IClock& clock,
         td->setDryRun(opt.dryRun);
         if (!td->connect(err)) return false;
         if (cfg.getBool("tello.downvision", false)) td->setDownvision(true);
+        // Optional video settings of the SDK 3.0 firmware (Tello EDU / Talent). Empty = leave the drone as it is.
+        // A lighter stream is a little less work and heat for the drone, and less to decode on the ground.
+        struct { const char* key; const char* cmd; } vset[] = {
+            {"tello.video_fps", "setfps"}, {"tello.video_bitrate", "setbitrate"}, {"tello.video_resolution", "setresolution"}};
+        for (const auto& v : vset) {
+            const std::string val = cfg.getString(v.key, "");
+            if (val.empty() || opt.dryRun) continue;
+            std::string reply;
+            const bool ok = td->command(std::string(v.cmd) + " " + val, &reply, 3.0);
+            if (ok) LOG_INFO("video: %s %s accepted", v.cmd, val.c_str());
+            else LOG_WARN("video: %s %s not accepted (%s): needs SDK 3.0 firmware", v.cmd, val.c_str(), reply.c_str());
+        }
         if (!td->streamOn()) LOG_WARN("streamon was not acknowledged; trying to open the video anyway");
         src = std::make_unique<VideoCaptureSource>(opt.source == "udp" ? td->videoUrl() : opt.source, true);
         drone = std::move(td);
@@ -619,7 +761,8 @@ int runSim(const Config& cfg, const MissionOptions& opt) {
                 std::string k = item.substr(0, eq), v = item.substr(eq + 1);
                 if (k == "pitch") { live.set("sim.cam_pitch_true_deg", v); live.set("camera.pitch_deg", v); }
                 else if (k == "alt") live.set("mission.altitude_cm", v);
-                else if (k == "track") o.track = (v == "example") ? "example" : "random";
+                else if (k == "track") o.track = v.empty() ? "random" : v;
+                else if (k == "color") live.set("line.color_mode", v);
                 else if (k == "seed") o.seed = (uint64_t)std::max(0LL, atoll(v.c_str()));
             }
             LOG_INFO("simulation restarted from the page: %s -> pitch %s deg, altitude %s cm, track %s, seed %llu", req.c_str(),
@@ -629,10 +772,17 @@ int runSim(const Config& cfg, const MissionOptions& opt) {
             continue;
         }
         const auto& r = sim.result();
-        char row[256];
-        snprintf(row, sizeof(row), "episode %2d seed %llu: %-9s segments=%d/%zu time=%6.1fs  path dev mean %.2f max %.2f m  (%s)", ep + 1, (unsigned long long)seed,
-                 r.finished ? "FINISHED" : (r.crashed ? "CRASHED" : "FAILED"), r.segments, sim.track().tags.size(), r.time,
-                 r.devN ? r.devSum / r.devN : 0.0, r.devMax, r.reason.c_str());
+        double vAll, vTag, vLine;
+        loop.visionCost(vAll, vTag, vLine);
+        const Perception::Calib cal = loop.calib();
+        LOG_INFO("vision cost per frame: %.1f ms (tags %.1f ms, tape %.1f ms)   camera found at pitch %.1f roll %.1f deg, height tags/sensor %.3f (%d sightings; true %.1f)   stick gain %.4f",
+                 vAll, vTag, vLine, cal.pitchDeg, cal.rollDeg, cal.heightRatio, cal.samples, sim.camPitchTrueDeg(), loop.rcGain());
+        char row[400], pass[96] = "";
+        for (size_t i = 0; i < r.tagPass.size() && i < 6; ++i)
+            snprintf(pass + strlen(pass), sizeof(pass) - strlen(pass), "%s%.0f", i ? "/" : "", std::min(999.0, r.tagPass[i] * 100.0));
+        snprintf(row, sizeof(row), "episode %2d seed %llu: %-9s segments=%d/%zu time=%6.1fs  path dev mean %.3f rms %.3f max %.3f m  tag pass %s cm  speed %.2f m/s  (%s)",
+                 ep + 1, (unsigned long long)seed, r.finished ? "FINISHED" : (r.crashed ? "CRASHED" : "FAILED"), r.segments, sim.track().tags.size(), r.time,
+                 r.devN ? r.devSum / r.devN : 0.0, r.devN ? std::sqrt(r.devSq / r.devN) : 0.0, r.devMax, pass, r.time > 0 ? r.pathLen / r.time : 0.0, r.reason.c_str());
         LOG_INFO("%s", row);
         rows.push_back(row);
         if (r.finished) { ++finished; sumT += r.time; }

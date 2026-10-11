@@ -46,6 +46,37 @@ struct NavParams {
 
 struct RcCommand { int lr = 0, fb = 0, ud = 0, yaw = 0; };
 
+// Course mode: the camera looks steeply down (mirror), so every piece of tape around the drone is seen from
+// above. The navigator follows the tape itself, flies over each tag at its end and takes the nearest other
+// tape end as the start of the next segment. The drone keeps its heading and moves sideways/backwards freely.
+struct CourseParams {
+    std::vector<int> order{1, 2, 3, 4};   // tags in the order they are visited; the last one is the finish
+    int finishId = 4;
+    double vCruise = 0.45, vMin = 0.08, vWaypoint = 0.20, vClimb = 0.25;   // m/s
+    double vGap = 0.25;                   // m/s, across the gap between a tag and the start of the next tape
+    double lookaheadM = 0.05, lookaheadPerMs = 0.45;                         // preview distance = base + per m/s of speed
+    double tagLookPastM = 0.02;           // the preview point goes no further than this beyond a tag not yet flown over
+    double kCross = 1.5;                  // 1/s: pull back onto the route per metre of cross-track error
+    double kBias = 0.4, biasMax = 0.12;   // 1/s^2, m/s: integral of that error = what it takes to hold against a steady drift
+    double biasZoneM = 0.08;              // ... only errors smaller than this are integrated (a big one is not a drift)
+    bool calibAtFirstTag = true;          // camera angle not known yet: measure it over the first tag before going on
+    double mountPitchMinDeg = 84, mountPitchMaxDeg = 104;   // outside this the camera is blind behind / ahead of the drone: land
+    double traceHz = 5;                   // debug log: this many lines a second about what the navigator is doing (0 = none)
+    double maxRangeM = 0;                 // > 0: land when the drone seems to be further than this from where it took off
+    double accel = 0.7, latAccel = 0.5;                                      // m/s^2: braking and cornering limits
+    double cornerBaseM = 0.075;           // m: a corner is measured between two chords of this length
+    double rcGain = 0.015;                // m/s per stick unit (start value; measured in flight when adaptGain)
+    bool adaptGain = true;
+    double respTau = 0.35;                // s, how fast the drone follows a new stick command
+    double latencyS = 0.20;               // s, age of the image when the command reaches the drone
+    double tagCaptureM = 0.05, startCaptureM = 0.06, tagAssocM = 0.45, nextSearchM = 1.0, firstSearchM = 1.2;
+    double lostCoastS = 0.35, lostLandS = 5.0, endWaitS = 1.5;
+    double finishCenterM = 0.035, finishCenterMaxS = 2.5;
+    double finishAltCm = 0, finishDescentM = 0.6;   // > 0: come down to this height over the last stretch before the finish tag
+    double maxUd = 60, maxRc = 70, kYawHold = 1.5;
+    void load(const Config& cfg);
+};
+
 // Mission state machine: takeoff -> follow line -> read tag -> maneuver -> acquire next line ... -> land.
 class Navigator {
 public:
@@ -76,6 +107,16 @@ public:
     bool haveTarget = false;
     std::vector<std::string> events;
 
+    // course mode: what the HUD draws on the video
+    bool courseMode() const { return courseMode_; }
+    const CourseParams& courseParams() const { return cp_; }
+    std::vector<cv::Point2d> courseRoute;     // route ahead in the body frame (m)
+    int courseWaypoint = -1;                  // index in courseRoute of the next tag / line start to fly over
+    int nextTagId() const;
+    double speedMs() const;                   // modelled ground speed
+    double rcGain() const { return cs_.gain; }
+    bool rcGainMeasured() const { return cs_.gainSamples >= 20; }
+
 private:
     void setPhase(Phase ph, const char* why);
     void sendRc(double lr, double fb, double ud, double yaw, bool instant = false);
@@ -87,6 +128,17 @@ private:
     double endTangentRelDeg(const TelloState& st) const;
     double approachDist() const;
     bool pursuitTarget(const LineObservation& line, double& tx, double& ty, double* tangentDeg = nullptr) const;
+
+    // ---- course mode (NavigatorCourse.cpp)
+    void stepCourse(const Observation& obs, const TelloState& st);
+    void courseTakeoff(const TelloState& st);
+    void courseFly(const Observation& obs, const TelloState& st);
+    void courseCommand(const cv::Point2d& vel, const TelloState& st);
+    void courseTagReached(int id, const cv::Point2d& pos, const Observation& obs, int activeLine);
+    bool courseChooseNext(const Observation& obs, int excludeLine);
+    bool courseFindNext(const Observation& obs, int excludeLine, const cv::Point2d& anchor, const cv::Point2d& arrivalDir,
+                        int& line, int& end, double& dist) const;
+    void courseLand(const char* phaseWhy, Phase endPhase);
 
     void doTakeoff(const TelloState& st);
     void doAcquire(const Observation& obs, const TelloState& st);
@@ -109,6 +161,38 @@ private:
     IDrone& drone_;
     IClock& clock_;
     NavParams p_;
+    CourseParams cp_;
+    bool courseMode_ = false;
+    struct CourseState {
+        enum Stage { First, Line, SeekNext, Finish, Calib } stage = First;
+        int calibLeg = 0;                            // step of the manoeuvre that measures the camera angle over a tag
+        double calibLegStart = 0;
+        bool calibDone = false;
+        int k = 0;                                   // index in cp_.order of the next tag
+        double stageStart = 0, lastT = 0, lastRouteT = 0, endSince = -1, blindUntil = -1e9;
+        // memory in the body frame, moved every frame by the motion estimate
+        bool havePrev = false;
+        cv::Point2d prevTarget, prevBehind, travelDir{1, 0};
+        double prevExtra = 0;                        // how far beyond the end of the tape the previous preview point was
+        cv::Point2d bias{0, 0};                      // m/s: velocity added to hold against a steady drift
+        cv::Point2d fromStart{0, 0};                 // m: where the drone is from its take-off point, by dead reckoning
+        bool haveStart = false, startCaptured = true;
+        cv::Point2d startPos, anchor, arrivalDir{1, 0};
+        int anchorTag = -1;                          // the tag the anchor is (-1: the end of a tape without tag)
+        int goalTag = -1;                            // the tag at the end of the tape being followed, once it has been seen
+        struct TagMem { int id; cv::Point2d p; double seen; bool fresh; cv::Point2d prevP; double prevSeen; };
+        std::vector<TagMem> tags;
+        // motion model: the commanded velocity seen through the drone's response, and its recent history
+        cv::Point2d vCmd, vModel;
+        std::deque<std::pair<double, cv::Point2d>> vHist;
+        double gain = 0.015;
+        int reversedCount = 0, gainSamples = 0;
+        bool yawValid = false, yaw0Valid = false, yawHoldOff = false;
+        int lastYaw = 0, yaw0 = 0;
+        double altBoostCm = 0, lastTraceT = -1e9;
+        bool finalDescent = false;                   // on the last stretch: flying at the finish height
+        int seekRises = 0;
+    } cs_;
     Phase phase_ = Phase::Idle;
     double phaseStart_ = 0, missionStart_ = 0, lastStep_ = 0, now_ = 0, prevStep_ = 0, blindUntil_ = -1e9;
     int alignFrames_ = 0;

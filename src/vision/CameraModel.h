@@ -35,7 +35,8 @@ public:
     double totalPitchDeg() const { return camPitchDeg_ - bodyPitchDeg_; }
     double bodyPitchDeg() const { return bodyPitchDeg_; }
 
-    bool pixelToGround(double u, double v, double& X, double& Y) const;
+    bool pixelToGround(double u, double v, double& X, double& Y) const;       // points ahead of the drone only
+    bool pixelToGroundAny(double u, double v, double& X, double& Y) const;    // also under and behind it (steep mirror view)
     bool groundToPixel(double X, double Y, double& u, double& v) const;
     cv::Vec3d pixelRayBody(double u, double v) const;      // unit ray, body frame
     cv::Vec3d camToBody(const cv::Vec3d& p) const { return R_ * p; }

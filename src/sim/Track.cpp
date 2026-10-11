@@ -1,7 +1,10 @@
 #include "sim/Track.h"
 
+#include <fstream>
 #include <random>
+#include <sstream>
 
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include "util/MathUtil.h"
@@ -64,6 +67,62 @@ Track TrackBuilder::example() {
     d2.pts.emplace_back(dx, dy); appendArc(d2.pts, dx, dy, dpsi, 1.5, -0.6);
     t.distractors.push_back(d2); t.distractorColors.push_back(cv::Scalar(220, 90, 30)); t.distractorOnStrip.push_back(true);
     return t;
+}
+
+std::vector<cv::Point2d> Track::route() const {
+    std::vector<cv::Point2d> r;
+    for (const auto& s : segments) r.insert(r.end(), s.pts.begin(), s.pts.end());
+    return r;
+}
+
+// "x,y x,y ..." -> points
+static std::vector<cv::Point2d> parsePoints(std::istringstream& ss) {
+    std::vector<cv::Point2d> pts;
+    std::string tok;
+    while (ss >> tok) {
+        size_t c = tok.find(',');
+        if (c == std::string::npos) continue;
+        pts.emplace_back(atof(tok.substr(0, c).c_str()), atof(tok.substr(c + 1).c_str()));
+    }
+    return pts;
+}
+
+bool TrackBuilder::fromFile(const std::string& path, Track& t, std::string* err) {
+    std::string file = path, dir = path;
+    std::ifstream in(file);
+    if (!in.is_open() || path.size() < 4 || path.substr(path.size() - 4) != ".txt") {
+        in.close();
+        in.clear();
+        file = path + "/course.txt";
+        in.open(file);
+    } else {
+        size_t slash = path.find_last_of("/\\");
+        dir = slash == std::string::npos ? "." : path.substr(0, slash);
+    }
+    if (!in.is_open()) { if (err) *err = "cannot open the course file " + file; return false; }
+    t = Track();
+    t.description = "course " + path;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream ss(line);
+        std::string key;
+        ss >> key;
+        if (key == "world_size") ss >> t.worldSize;
+        else if (key == "px_per_m") ss >> t.pxPerM;
+        else if (key == "image") { std::string f; ss >> f; t.worldImage = dir + "/" + f; }
+        else if (key == "tags_in_image") { int v = 0; ss >> v; t.tagsInImage = v != 0; }
+        else if (key == "tag_paper") ss >> t.tagPaperW >> t.tagPaperH;
+        else if (key == "start") ss >> t.start.x >> t.start.y >> t.startYawDeg;
+        else if (key == "segment") { TrackSegment s; s.pts = parsePoints(ss); if (s.pts.size() >= 2) t.segments.push_back(s); }
+        else if (key == "tag") { TrackTag g; ss >> g.id >> g.x >> g.y >> g.yawDeg; t.tags.push_back(g); }
+        else if (key == "distractor") {
+            TrackSegment s; s.pts = parsePoints(ss);
+            if (s.pts.size() >= 2) { t.distractors.push_back(s); t.distractorColors.push_back(cv::Scalar(0, 210, 240)); t.distractorOnStrip.push_back(false); }
+        }
+    }
+    if (t.segments.empty() || t.tags.empty()) { if (err) *err = "the course file " + file + " has no segments or no tags"; return false; }
+    return true;
 }
 
 static bool buildRandom(uint64_t seed, double worldSize, Track& t);
@@ -172,6 +231,14 @@ static std::vector<cv::Point> toPx(const Track& t, double ppm, const std::vector
 
 cv::Mat TrackBuilder::render(const Track& t, const TrackStyle& s, const TagDetector& tags) {
     int W = (int)std::lround(t.worldSize * s.pxPerM);
+    if (!t.worldImage.empty()) {   // floor taken from a photo of the real course
+        cv::Mat photo = cv::imread(t.worldImage, cv::IMREAD_COLOR);
+        if (!photo.empty()) {
+            if (photo.cols != W || photo.rows != W) cv::resize(photo, photo, cv::Size(W, W), 0, 0, cv::INTER_AREA);
+            if (t.tagsInImage) return photo;
+            return renderTags(photo, t, s, tags);
+        }
+    }
     cv::Mat img(W, W, CV_8UC3, s.carpet);
     std::mt19937_64 rng(s.textureSeed);
     std::uniform_real_distribution<double> uni(0, 1);
@@ -209,10 +276,15 @@ cv::Mat TrackBuilder::render(const Track& t, const TrackStyle& s, const TagDetec
     // track: white strips, then the dark line
     for (auto& seg : t.segments) cv::polylines(img, toPx(t, s.pxPerM, seg.pts), false, cv::Scalar(245, 245, 245), stripPx, cv::LINE_AA);
     for (auto& seg : t.segments) cv::polylines(img, toPx(t, s.pxPerM, seg.pts), false, s.lineColor, linePx, cv::LINE_AA);
-    // tags on letter-size paper
+    return renderTags(img, t, s, tags);
+}
+
+// tags on letter-size paper
+cv::Mat TrackBuilder::renderTags(cv::Mat img, const Track& t, const TrackStyle& s, const TagDetector& tags) {
+    int W = img.cols;
     double frac = tags.blackSquareFraction();
     int tagPx = std::max(8, (int)std::lround(s.tagSizeM / frac * s.pxPerM));
-    int paperW = (int)std::lround(0.216 * s.pxPerM), paperH = (int)std::lround(0.279 * s.pxPerM);
+    int paperW = (int)std::lround((t.tagPaperW > 0 ? t.tagPaperW : 0.216) * s.pxPerM), paperH = (int)std::lround((t.tagPaperH > 0 ? t.tagPaperH : 0.279) * s.pxPerM);
     for (auto& tg : t.tags) {
         cv::Mat bits = tags.renderTag(tg.id);
         if (bits.empty()) continue;

@@ -20,6 +20,8 @@ void SimParams::load(const Config& c) {
     tau = c.getDouble("sim.tau", tau);
     yawTau = c.getDouble("sim.yaw_tau", yawTau);
     leanDegPerMs = c.getDouble("sim.lean_deg_per_ms", leanDegPerMs);
+    leanDegPerMs2 = c.getDouble("sim.lean_deg_per_ms2", leanDegPerMs2);
+    leanTau = c.getDouble("sim.lean_tau", leanTau);
     takeoffAltM = c.getDouble("sim.takeoff_alt_m", takeoffAltM);
     goSpeedErr = c.getDouble("sim.go_scale_err", goSpeedErr);
     goPosNoiseM = c.getDouble("sim.go_pos_noise_m", goPosNoiseM);
@@ -34,6 +36,16 @@ void SimParams::load(const Config& c) {
     idleLimitS = c.getDouble("sim.idle_limit_s", idleLimitS);
     maxTimeS = c.getDouble("sim.max_time_s", maxTimeS);
     tracePoseS = c.getDouble("sim.trace_pose_s", tracePoseS);
+    exposureS = c.getDouble("sim.exposure_s", exposureS);
+    startJitterM = c.getDouble("sim.start_jitter_m", startJitterM);
+    startYawJitterDeg = c.getDouble("sim.start_yaw_jitter_deg", startYawJitterDeg);
+    startYawOffsetDeg = c.getDouble("sim.start_yaw_offset_deg", startYawOffsetDeg);
+    rcVelLat = c.getDouble("sim.rc_vel_lat_ms", rcVelLat);
+    telemetryHz = c.getDouble("sim.telemetry_hz", telemetryHz);
+    tofScale = c.getDouble("sim.tof_scale", tofScale);
+    focalScale = c.getDouble("sim.focal_scale", focalScale);
+    rcDeadband = c.getDouble("sim.rc_deadband", rcDeadband);
+    imageGain = c.getDouble("sim.image_gain", imageGain);
 }
 
 Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackKind, const TagDetector& tagRenderer)
@@ -49,8 +61,18 @@ Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackK
     std::vector<double> cc = cfg.getDoubleList("sim.carpet_bgr", {118, 108, 100});
     if (cc.size() >= 3) style_.carpet = cv::Scalar(cc[0], cc[1], cc[2]);
     style_.textureSeed = seed;
-    track_ = (trackKind == "example") ? TrackBuilder::example() : TrackBuilder::random(seed, cfg.getDouble("sim.world_size_m", 9.0));
+    if (trackKind == "example") track_ = TrackBuilder::example();
+    else if (trackKind == "random" || trackKind.empty()) track_ = TrackBuilder::random(seed, cfg.getDouble("sim.world_size_m", 9.0));
+    else {
+        std::string err;
+        if (!TrackBuilder::fromFile(trackKind, track_, &err)) {
+            LOG_ERROR("%s -> using the example track", err.c_str());
+            track_ = TrackBuilder::example();
+        } else if (track_.pxPerM > 0) style_.pxPerM = track_.pxPerM;
+    }
     world_ = TrackBuilder::render(track_, style_, tagRenderer);
+    route_ = track_.route();
+    res_.tagPass.assign(track_.tags.size(), 1e9);
     if (p_.tracePoseS > 0)
         for (size_t i = 0; i < track_.segments.size(); ++i) {
             const auto& sp = track_.segments[i].pts;
@@ -65,14 +87,19 @@ Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackK
     Intrinsics K;
     K.width = cfg.getInt("camera.width", 960);
     K.height = cfg.getInt("camera.height", 720);
-    K.fx = cfg.getDouble("camera.fx", 920);
-    K.fy = cfg.getDouble("camera.fy", 920);
+    K.fx = cfg.getDouble("camera.fx", 920) * p_.focalScale;
+    K.fy = cfg.getDouble("camera.fy", 920) * p_.focalScale;
     K.cx = cfg.getDouble("camera.cx", K.width / 2.0);
     K.cy = cfg.getDouble("camera.cy", K.height / 2.0);
     truth_.setIntrinsics(K);
     truth_.setCameraMount(p_.camPitchTrueDeg, p_.camRollTrueDeg);
     x_ = track_.start.x; y_ = track_.start.y; z_ = 0;
-    psi_ = psi0_ = track_.startYawDeg;
+    psi_ = psi0_ = track_.startYawDeg + p_.startYawOffsetDeg;
+    if (p_.startJitterM > 0 || p_.startYawJitterDeg > 0) {   // nobody places a drone to the millimetre
+        std::normal_distribution<double> np(0.0, 1.0);
+        x_ += p_.startJitterM * np(rng_); y_ += p_.startJitterM * np(rng_);
+        psi_ = psi0_ = track_.startYawDeg + p_.startYawOffsetDeg + p_.startYawJitterDeg * np(rng_);
+    }
     LOG_INFO("Simulator: %s, %zu segments, tags:%s", track_.description.c_str(), track_.segments.size(),
              [&] { std::string s; for (auto& t : track_.tags) s += " " + std::to_string(t.id); return s; }().c_str());
 }
@@ -80,6 +107,7 @@ Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackK
 void Simulator::physicsStep(double dt) {
     if (!flying_) return;
     double a = dt / p_.tau;
+    const double vx0 = vxB_, vy0 = vyB_;
     vxB_ += (cmdVx_ - vxB_) * a;
     vyB_ += (cmdVy_ - vyB_) * a;
     yawRate_ += (cmdYaw_ - yawRate_) * (dt / p_.yawTau);
@@ -93,10 +121,17 @@ void Simulator::physicsStep(double dt) {
     double vyW = vxB_ * std::sin(psi) + vyB_ * std::cos(psi) + driftY_;
     x_ += vxW * dt;
     y_ += vyW * dt;
+    res_.pathLen += std::hypot(vxW, vyW) * dt;
     z_ = std::max(0.0, z_ + vz_ * dt);
     psi_ = mu::wrapDeg(psi_ + yawRate_ * dt);
-    bodyPitch_ = -p_.leanDegPerMs * vxB_;
-    bodyRoll_ = -p_.leanDegPerMs * vyB_;
+    // tilt: what holds the speed against the drag, plus what it takes to accelerate (the airframe leans first, the speed follows)
+    if (dt > 1e-9) {
+        const double k = std::min(1.0, dt / std::max(1e-3, p_.leanTau));
+        leanAx_ += (p_.leanDegPerMs2 * (vxB_ - vx0) / dt - leanAx_) * k;
+        leanAy_ += (p_.leanDegPerMs2 * (vyB_ - vy0) / dt - leanAy_) * k;
+    }
+    bodyPitch_ = -(p_.leanDegPerMs * vxB_ + leanAx_);
+    bodyRoll_ = -(p_.leanDegPerMs * vyB_ + leanAy_);
     if (trail_.empty() || cv::norm(trail_.back() - cv::Point2d(x_, y_)) > 0.05) trail_.emplace_back(x_, y_);
     checkProgress();
 }
@@ -177,12 +212,15 @@ bool Simulator::command(const std::string& cmd, std::string* reply, double) {
         res_.tookOff = true;
         takeoffT_ = t_;
         lastProgressT_ = t_;
+        takingOff_ = true;                 // the climb is the drone's own: where it was put down is not a tracking error
         moveBlocking(0, 0, p_.takeoffAltM, 0.5);
+        takingOff_ = false;
         zTarget_ = z_;
         return ok();
     }
     if (op == "land") {
         if (!flying_) return ok();
+        landing_ = true;
         moveBlocking(0, 0, -z_, 0.4);
         flying_ = false;
         res_.landed = true;
@@ -235,13 +273,22 @@ bool Simulator::command(const std::string& cmd, std::string* reply, double) {
 }
 
 void Simulator::rc(int lr, int fb, int ud, int yaw) {
+    if (std::abs(fb) < p_.rcDeadband) fb = 0;
+    if (std::abs(lr) < p_.rcDeadband) lr = 0;
     cmdVx_ = mu::clamp(fb, -100, 100) * p_.rcVel;
-    cmdVy_ = -mu::clamp(lr, -100, 100) * p_.rcVel;
+    cmdVy_ = -mu::clamp(lr, -100, 100) * (p_.rcVelLat > 0 ? p_.rcVelLat : p_.rcVel);
     cmdVz_ = mu::clamp(ud, -100, 100) * p_.rcVz;
     cmdYaw_ = -mu::clamp(yaw, -100, 100) * p_.rcYawRate;
 }
 
+// The real Tello pushes its state about 10 times a second: between two packets the navigator sees the old one.
 TelloState Simulator::state() const {
+    if (p_.telemetryHz <= 0) return trueState();
+    if (t_ - heldStateT_ >= 1.0 / p_.telemetryHz) { heldState_ = trueState(); heldStateT_ = t_; }
+    return heldState_;
+}
+
+TelloState Simulator::trueState() const {
     TelloState s;
     s.valid = true;
     s.stamp = t_;
@@ -251,7 +298,7 @@ TelloState Simulator::state() const {
     s.vgx = mu::roundInt(vxB_ * 100);
     s.vgy = mu::roundInt(-vyB_ * 100);
     s.vgz = mu::roundInt(vz_ * 100);
-    s.tof = flying_ ? mu::roundInt(z_ * 100) : 10;
+    s.tof = flying_ ? mu::roundInt(z_ * 100 * p_.tofScale) : 10;
     s.h = mu::roundInt(z_ * 100);
     s.bat = (int)std::lround(std::max(0.0, p_.batteryStart - t_ / 7.8));
     s.baro = z_;
@@ -262,17 +309,18 @@ TelloState Simulator::state() const {
 
 void Simulator::checkProgress() {
     if (!flying_) return;
-    if (t_ - takeoffT_ > 1.0) {   // path fidelity: how far from the nearest line point (gaps between segments count too)
+    if (t_ - takeoffT_ > 1.0 && !landing_ && !takingOff_ && !devPaused_) {   // path fidelity: distance to the route (the tape and the straight links between segments)
         double best = 1e9;
-        for (const auto& sg : track_.segments)
-            for (size_t i = 1; i < sg.pts.size(); ++i) {
-                const cv::Point2d& a = sg.pts[i - 1]; const cv::Point2d& b = sg.pts[i];
-                double dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
-                double u = l2 > 1e-9 ? mu::clamp(((x_ - a.x) * dx + (y_ - a.y) * dy) / l2, 0.0, 1.0) : 0.0;
-                best = std::min(best, std::hypot(x_ - (a.x + u * dx), y_ - (a.y + u * dy)));
-            }
-        res_.devSum += best; res_.devMax = std::max(res_.devMax, best); ++res_.devN;
+        for (size_t i = 1; i < route_.size(); ++i) {
+            const cv::Point2d& a = route_[i - 1]; const cv::Point2d& b = route_[i];
+            double dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+            double u = l2 > 1e-9 ? mu::clamp(((x_ - a.x) * dx + (y_ - a.y) * dy) / l2, 0.0, 1.0) : 0.0;
+            best = std::min(best, std::hypot(x_ - (a.x + u * dx), y_ - (a.y + u * dy)));
+        }
+        res_.devSum += best; res_.devSq += best * best; res_.devMax = std::max(res_.devMax, best); ++res_.devN;
     }
+    for (size_t i = 0; i < track_.tags.size(); ++i)
+        res_.tagPass[i] = std::min(res_.tagPass[i], std::hypot(x_ - track_.tags[i].x, y_ - track_.tags[i].y));
     if (p_.tracePoseS > 0 && t_ - lastTraceT_ >= p_.tracePoseS) {
         lastTraceT_ = t_;
         const TrackTag* tg = nextTag_ < (int)track_.tags.size() ? &track_.tags[nextTag_] : nullptr;
@@ -338,9 +386,35 @@ cv::Mat Simulator::render() {
     }
     cv::Mat img;
     cv::remap(world_, img, mapX_, mapY_, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(75, 70, 62));
-    double speed = std::hypot(vxB_, vyB_) + std::fabs(yawRate_) * 0.012;
-    int k = 1 + (int)(speed * p_.blurPerMs);
-    if (k > 1) cv::blur(img, img, cv::Size(std::min(k, 9), std::min(k, 9)));
+    if (p_.exposureS > 0) {
+        // The floor point at the image centre moves (relative to the drone) by -v * exposure, plus the yaw rate
+        // turning it around the drone: smear the frame along that image direction by that many pixels.
+        cv::Vec3d ray = truth_.pixelRayBody(K.cx, K.cy);
+        if (ray[2] < -1e-3) {
+            double tt = -z_ / ray[2];
+            double X0 = tt * ray[0], Y0 = tt * ray[1], u0, v0, u1, v1;
+            double w = mu::deg2rad(yawRate_);
+            double X1 = X0 - (vxB_ - w * Y0) * p_.exposureS, Y1 = Y0 - (vyB_ + w * X0) * p_.exposureS;
+            if (truth_.groundToPixel(X0, Y0, u0, v0) && truth_.groundToPixel(X1, Y1, u1, v1)) {
+                double du = u1 - u0, dv = v1 - v0, len = std::hypot(du, dv);
+                int n = std::min((int)std::lround(len), 61);
+                if (n >= 2) {
+                    int ks = n | 1;
+                    cv::Mat kern = cv::Mat::zeros(ks, ks, CV_32F);
+                    double hx = du / len * (n - 1) / 2.0, hy = dv / len * (n - 1) / 2.0, c0 = (ks - 1) / 2.0;
+                    cv::line(kern, cv::Point((int)std::lround(c0 - hx), (int)std::lround(c0 - hy)),
+                             cv::Point((int)std::lround(c0 + hx), (int)std::lround(c0 + hy)), cv::Scalar(1.0), 1, cv::LINE_8);
+                    double sum = cv::sum(kern)[0];
+                    if (sum > 0) { kern /= sum; cv::filter2D(img, img, -1, kern, cv::Point(-1, -1), 0, cv::BORDER_REPLICATE); }
+                }
+            }
+        }
+    } else {
+        double speed = std::hypot(vxB_, vyB_) + std::fabs(yawRate_) * 0.012;
+        int k = 1 + (int)(speed * p_.blurPerMs);
+        if (k > 1) cv::blur(img, img, cv::Size(std::min(k, 9), std::min(k, 9)));
+    }
+    if (std::fabs(p_.imageGain - 1.0) > 1e-3) img.convertTo(img, -1, p_.imageGain, 0);
     if (p_.noiseSigma > 0) {
         cv::Mat f, n(img.size(), CV_32FC3);
         img.convertTo(f, CV_32FC3);

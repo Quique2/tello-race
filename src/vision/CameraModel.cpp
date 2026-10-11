@@ -41,6 +41,15 @@ bool GroundProjector::pixelToGround(double u, double v, double& X, double& Y) co
     return X > 0.01 && X < 50.0;
 }
 
+bool GroundProjector::pixelToGroundAny(double u, double v, double& X, double& Y) const {
+    cv::Vec3d d = pixelRayBody(u, v);
+    if (d[2] > -1e-3) return false;           // ray does not go down
+    double t = -H_ / d[2];
+    X = t * d[0];
+    Y = t * d[1];
+    return std::fabs(X) < 50.0 && std::fabs(Y) < 50.0;
+}
+
 bool GroundProjector::groundToPixel(double X, double Y, double& u, double& v) const {
     cv::Vec3d pb(X, Y, -H_);
     cv::Vec3d pc = Rt_ * pb;

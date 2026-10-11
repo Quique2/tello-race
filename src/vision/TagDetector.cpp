@@ -46,6 +46,7 @@ bool TagDetector::init(const std::string& family, double quadDecimate, double qu
     td_ = apriltag_detector_create();
     apriltag_detector_add_family(td_, tf_);
     td_->quad_decimate = (float)quadDecimate;
+    decimate_ = quadDecimate;
     td_->quad_sigma = (float)quadSigma;
     td_->nthreads = threads;
     td_->refine_edges = refineEdges ? 1 : 0;
@@ -56,9 +57,10 @@ bool TagDetector::init(const std::string& family, double quadDecimate, double qu
     return true;
 }
 
-std::vector<TagDetection> TagDetector::detect(const cv::Mat& grayIn, const Intrinsics* K, double tagSizeM) {
+std::vector<TagDetection> TagDetector::detect(const cv::Mat& grayIn, const Intrinsics* K, double tagSizeM, double decimate) {
     std::vector<TagDetection> out;
     if (!td_ || grayIn.empty()) return out;
+    td_->quad_decimate = (float)(decimate > 0 ? decimate : decimate_);
     auto t0 = std::chrono::steady_clock::now();
     cv::Mat gray = grayIn.isContinuous() ? grayIn : grayIn.clone();
     image_u8_t im{gray.cols, gray.rows, (int32_t)gray.step[0], gray.data};

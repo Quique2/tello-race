@@ -33,7 +33,8 @@ public:
     bool init(const std::string& family, double quadDecimate, double quadSigma, int threads,
               bool refineEdges, double decodeSharpening, std::string* err = nullptr);
     // K (full-resolution intrinsics of 'gray') and tagSizeM enable pose estimation.
-    std::vector<TagDetection> detect(const cv::Mat& gray, const Intrinsics* K = nullptr, double tagSizeM = 0);
+    // decimate > 0 overrides the configured quad decimation for this call (the library only does 1, 1.5, 2, 3, ...).
+    std::vector<TagDetection> detect(const cv::Mat& gray, const Intrinsics* K = nullptr, double tagSizeM = 0, double decimate = -1);
     double lastMs() const { return lastMs_; }
     const std::string& family() const { return family_; }
 
@@ -47,4 +48,5 @@ private:
     apriltag_family* tf_ = nullptr;
     std::string family_;
     double lastMs_ = 0;
+    double decimate_ = 2.0;
 };

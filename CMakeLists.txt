@@ -71,8 +71,10 @@ set(SRC
   src/vision/CameraModel.cpp
   src/vision/TagDetector.cpp
   src/vision/LineDetector.cpp
+  src/vision/PathTracer.cpp
   src/vision/Perception.cpp
   src/control/Navigator.cpp
+  src/control/NavigatorCourse.cpp
   src/sim/Track.cpp
   src/sim/Simulator.cpp
   src/app/Mission.cpp

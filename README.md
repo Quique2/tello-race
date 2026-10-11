@@ -22,7 +22,8 @@ src/control    Navigator state machine + controllers
 src/sim        Track generator/renderer and the Simulator (drone kinematics + camera rendering)
 src/app        Mission loop (HUD, keys, recording), calibration tools
 scripts/       build.ps1, run_sim.ps1, fly.ps1, firewall_allow.ps1, setup_toolchain.ps1
-docs/          STRATEGY.md
+docs/          STRATEGY.md, COURSE_TEC.md (mirror course mode), HANDOFF.md
+courses/       simulator courses made from a photo of the real one (tools/course_from_photo.py)
 ```
 
 ## Build (Windows, no admin rights needed)
@@ -59,6 +60,21 @@ from that checkpoint tag on the next start (`0` = start line), `m` mask, `d` deb
 
 Useful options: `--set section.key=value` (any config value, repeatable), `--dry-run` (video + telemetry, no
 flight commands), `--start-at-tag N`, `--dump-every N` (save annotated frames to `logs/frames`).
+
+## The taped course seen through the mirror (course mode)
+
+With the original mirror clip the front camera looks straight down. For that view there is a second navigator
+that follows the tape itself from above, flies over the tags in order and never turns:
+
+```powershell
+# simulator on the photographed course, then the real drone
+tello_race sim --profile config/course_tec.ini --track courses/tec_tarp
+tello_race fly --profile config/course_tec.ini --set web.enabled=1
+```
+
+The page has a BLUE / YELLOW / BLACK switch for the tape to follow and draws the followed route on the video.
+Put the drone on the first tape a hand-span after its beginning, nose along it. Everything else (first flight,
+why 1.2 m, simulation results, tuning) is in [docs/COURSE_TEC.md](docs/COURSE_TEC.md).
 
 ## First contact with the real drone (verified 2026-09-12)
 

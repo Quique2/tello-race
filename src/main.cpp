@@ -22,6 +22,7 @@ static void usage() {
         "  gen-tags       write printable AprilTag PNGs (IDs 1-4 by default)\n\n"
         "options:\n"
         "  --config <file>        configuration file (default config/default.ini)\n"
+        "  --profile <file>       lay another .ini over the configuration, e.g. config/course_tec.ini (repeatable)\n"
         "  --set sec.key=value    override a configuration value (repeatable)\n"
         "  --source <spec>        udp (default) | file:<video> | camera:<index>\n"
         "  --dry-run              fly: connect for video/telemetry but never send flight commands\n"
@@ -30,7 +31,7 @@ static void usage() {
         "  --record               save video + telemetry CSV under logs/\n"
         "  --headless             no windows (sim batch runs)\n"
         "  --no-realtime          sim/replay as fast as possible\n"
-        "  --track <random|example>  simulator track kind\n"
+        "  --track <random|example|folder>  simulator track: a generated one, or a course folder made from a photo\n"
         "  --episodes <n> --seed <n>  simulator batch settings\n"
         "  --ui-scale <f>         window scale factor (default 1.0)\n"
         "  --ids 1,2,3,4 --size-px 600 --out <dir>   gen-tags settings\n"
@@ -66,6 +67,7 @@ int main(int argc, char** argv) {
         };
         if (a == "--config") opt.configPath = next("--config");
         else if (a == "--set") opt.overrides.push_back(next("--set"));
+        else if (a == "--profile") opt.profiles.push_back(next("--profile"));
         else if (a == "--source") opt.source = next("--source");
         else if (a == "--dry-run") opt.dryRun = true;
         else if (a == "--start-at-tag") opt.startAtTag = atoi(next("--start-at-tag").c_str());
@@ -96,8 +98,40 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!cfg.loadFile(opt.configPath, &err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    for (auto p : opt.profiles) {          // found like the main file: as given, next to the executable, or one level up
+        if (!findConfig(p, argv[0])) { fprintf(stderr, "profile not found: %s\n", p.c_str()); return 1; }
+        Config layer;                      // merged key by key: the main file stays the one the calibration tools rewrite
+        if (!layer.loadFile(p, &err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
+        for (const auto& kv : layer.all()) cfg.set(kv.first, kv.second);
+        LOG_INFO("profile: %s", p.c_str());
+    }
+    // What earlier flights measured (mirror angle, lean signs, stick gain) is laid over the configuration; --set still
+    // wins. The simulator leaves that file alone unless sim.use_learned is set.
+    std::string learnedPath;
+    {
+        Config probe = cfg;                // which file, and whether to use it, may themselves come from --set
+        for (auto& o : opt.overrides)
+            if (!probe.setFromArg(o, &err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
+        std::string learned = probe.getString("ground.learned_file", "");
+        const bool use = !learned.empty() && (cmd != "sim" || probe.getBool("sim.use_learned", false));
+        if (use) {
+            if (learned.find_first_of("/\\") == std::string::npos) {     // a bare name lives next to the main configuration file
+                size_t slash = opt.configPath.find_last_of("/\\");
+                learned = (slash == std::string::npos ? std::string(".") : opt.configPath.substr(0, slash)) + "/" + learned;
+            }
+            Config layer;
+            if (layer.loadFile(learned, nullptr)) {
+                for (const auto& kv : layer.all()) cfg.set(kv.first, kv.second);
+                LOG_INFO("learned in earlier flights (%s): camera pitch %s roll %s deg, stick gain %s m/s per unit", learned.c_str(),
+                         cfg.getString("camera.pitch_deg", "?").c_str(), cfg.getString("camera.roll_deg", "?").c_str(),
+                         cfg.getString("course.rc_gain_ms", "?").c_str());
+            }
+        }
+        learnedPath = use ? learned : "";
+    }
     for (auto& o : opt.overrides)
         if (!cfg.setFromArg(o, &err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    cfg.set("ground.learned_file", learnedPath);        // resolved (or switched off): this is where it is written back
     LOG_INFO("tello_race: command=%s config=%s", cmd.c_str(), opt.configPath.c_str());
 
     if (cmd == "fly") return runFly(cfg, opt);

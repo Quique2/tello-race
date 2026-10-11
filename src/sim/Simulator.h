@@ -20,7 +20,9 @@ struct SimParams {
     double rcVz = 0.01;            // m/s per rc unit (vertical)
     double rcYawRate = 1.2;        // deg/s per rc unit
     double tau = 0.35, yawTau = 0.2;
-    double leanDegPerMs = 8;       // airframe tilt per m/s of body velocity
+    double leanDegPerMs = 8;       // airframe tilt per m/s of body velocity (holding the speed against the drag)
+    double leanDegPerMs2 = 0;      // airframe tilt per m/s^2 (what it takes to accelerate: 5.8 deg is the physics)
+    double leanTau = 0.10;         // s, how fast the airframe tilts
     double takeoffAltM = 0.8;
     double goSpeedErr = 0.04, goPosNoiseM = 0.03, turnErrDeg = 2.0;
     double driftSigma = 0.02;      // random-walk hover drift (m/s)
@@ -29,6 +31,15 @@ struct SimParams {
     double boundsMargin = 0.3, reachRadiusM = 0.35, finishRadiusM = 0.45;
     double idleLimitS = 60, maxTimeS = 300;
     double tracePoseS = 0;   // >0: log the true pose every N s of sim time (debug)
+    double exposureS = 0;    // >0: motion blur from the real image motion during the exposure (replaces blurPerMs)
+    double startJitterM = 0, startYawJitterDeg = 0;   // placement error of the drone at the start (sigma)
+    double startYawOffsetDeg = 0;                     // the drone is put down turned by this much (180 = facing backwards)
+    double rcVelLat = 0;     // m/s per rc unit sideways (0 = same as forward)
+    double telemetryHz = 0;  // >0: the state is refreshed at this rate (the real Tello sends ~10 Hz)
+    double tofScale = 1.0;   // the height sensor reads this times the true height
+    double focalScale = 1.0; // the true focal length is this times camera.fx / fy
+    double rcDeadband = 0;   // stick values smaller than this do nothing
+    double imageGain = 1.0;  // brightness of the picture (the real camera may expose a white floor much darker)
     void load(const Config& cfg);
 };
 
@@ -61,9 +72,13 @@ public:
     struct Result {
         int segments = 0; bool finished = false, crashed = false, landed = false, tookOff = false;
         double time = 0; std::string reason;
-        double devSum = 0, devMax = 0; int devN = 0;   // distance to the nearest track line point while flying
+        double devSum = 0, devSq = 0, devMax = 0; int devN = 0;   // distance to the route (tape + links) while flying
+        std::vector<double> tagPass;      // closest approach to every tag, in course order (m)
+        double pathLen = 0;               // distance flown (m)
     };
     const Result& result() const { return res_; }
+    // a manoeuvre that leaves the route on purpose (measuring the camera angle over a tag) is not a tracking error
+    void pauseDeviation(bool on) { devPaused_ = on; }
     bool done() const;
     cv::Mat topView(int sizePx) const;
     const Track& track() const { return track_; }
@@ -97,13 +112,18 @@ private:
     std::mt19937_64 rng_;
     double t_ = 0, takeoffT_ = 0, lastProgressT_ = 0, lastTraceT_ = -1e9;
     std::function<void(double)> blockingCb_;
+    std::vector<cv::Point2d> route_;
+    bool landing_ = false, takingOff_ = false, devPaused_ = false;
+    mutable TelloState heldState_;
+    mutable double heldStateT_ = -1e9;
+    TelloState trueState() const;
     uint64_t seed_ = 0;
     uint64_t seq_ = 0;
     double x_ = 0, y_ = 0, z_ = 0, psi_ = 90, psi0_ = 90, zTarget_ = 0;
     double vxB_ = 0, vyB_ = 0, vz_ = 0, yawRate_ = 0;
     double cmdVx_ = 0, cmdVy_ = 0, cmdVz_ = 0, cmdYaw_ = 0;
     double driftX_ = 0, driftY_ = 0;
-    double bodyPitch_ = 0, bodyRoll_ = 0;
+    double bodyPitch_ = 0, bodyRoll_ = 0, leanAx_ = 0, leanAy_ = 0;
     bool flying_ = false;
     std::deque<cv::Mat> latencyQ_;
     std::vector<cv::Point2d> trail_;

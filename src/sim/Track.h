@@ -21,6 +21,13 @@ struct Track {
     std::vector<cv::Scalar> distractorColors;
     std::vector<bool> distractorOnStrip;
     std::string description;
+    // course built from a photo (tools/course_from_photo.py): the floor is a top-down image instead of a drawing
+    std::string worldImage;                 // file with worldSize * pxPerM pixels per side
+    double pxPerM = 0;                      // > 0: resolution of worldImage
+    bool tagsInImage = false;               // the floor image already shows the real tags: draw none
+    double tagPaperW = 0, tagPaperH = 0;    // sheet a drawn tag sits on (m); 0 = letter size
+    // full route in course order (segments joined by straight links): reference for the path-tracking error
+    std::vector<cv::Point2d> route() const;
 };
 
 struct TrackStyle {
@@ -36,6 +43,9 @@ class TrackBuilder {
 public:
     static Track example();                              // layout from the competition slides
     static Track random(uint64_t seed, double worldSize = 9.0);
+    // course folder (or its course.txt) written by tools/course_from_photo.py
+    static bool fromFile(const std::string& path, Track& t, std::string* err);
     static cv::Mat render(const Track& t, const TrackStyle& s, const TagDetector& tags);
+    static cv::Mat renderTags(cv::Mat img, const Track& t, const TrackStyle& s, const TagDetector& tags);
     static cv::Point2d worldToPx(const Track& t, double pxPerM, const cv::Point2d& p);
 };

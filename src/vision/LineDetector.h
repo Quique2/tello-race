@@ -9,12 +9,15 @@
 
 struct LineParams {
     int procWidth = 640;
-    std::string colorMode = "dark";        // "dark" (low value, any hue) or "hsv" (explicit ranges)
+    std::string colorMode = "dark";        // "dark" (low value, any hue) | "hsv" (explicit ranges) | "blue" | "yellow" (tape presets)
+    cv::Scalar blueLo{95, 80, 40}, blueHi{132, 255, 255}, yellowLo{16, 90, 90}, yellowHi{38, 255, 255};
+    double whiteDilateCm = 0;              // > 0: the white-surface test reaches this far on the floor (scales with the height)
     int darkVMax = 90, darkSMax = 255;
     cv::Scalar hsvLo1{0, 0, 0}, hsvHi1{180, 255, 255}, hsvLo2{0, 0, 0}, hsvHi2{0, 0, 0};
     bool hsvRange2 = false;
     bool whiteCheck = true;                // line must lie on the white strip
     int whiteSMax = 70, whiteVMin = 150, whiteDilatePx = 12;
+    bool whiteAuto = false;                // the white surface may come out darker than whiteVMin (exposure, shade): follow it down
     double minWidthCm = 1.0, maxWidthCm = 8.0;
     int morphOpen = 3, morphClose = 7;
     int minComponentArea = 60;
@@ -62,6 +65,12 @@ public:
                            const std::vector<std::vector<cv::Point2f>>& maskPolys, const LineObservation* prev,
                            const cv::Point2d* hint = nullptr);
     const cv::Mat& mask() const { return mask_; }
+    const cv::Mat& hsv() const { return hsv_; }          // processing-size HSV image of the last frame
+    // steep (mirror) view: only the tape mask is needed, the top-down tracer does the rest
+    void maskOnly(const cv::Mat& bgr, const GroundProjector& proj, const std::vector<std::vector<cv::Point2f>>& maskPolys) { buildMask(bgr, proj, maskPolys); }
+    // which tape to follow: "dark" | "hsv" | "blue" | "yellow"; false when the name is unknown
+    bool setColor(const std::string& name);
+    const std::string& color() const { return p_.colorMode; }
     double scale() const { return scale_; }
     void drawDebug(cv::Mat& frame, const LineObservation& obs, const GroundProjector& proj) const;
 
@@ -74,6 +83,11 @@ private:
 
     LineParams p_;
     cv::Mat hsv_, mask_, white_;
+    int whiteVUsed_ = 0, whiteLevel_ = 0;
+public:
+    int whiteVUsed() const { return whiteVUsed_; }      // the brightness limit the white test worked with in the last frame
+    int whiteLevel() const { return whiteLevel_; }      // brightness of the white surface in the last frame (0 = not measured)
+private:
     double scale_ = 1.0;
     struct BandDebug { int row; std::vector<std::pair<int, int>> runs; int chosen; };
     std::vector<BandDebug> bandDbg_;
