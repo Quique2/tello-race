@@ -46,6 +46,9 @@ void CourseParams::load(const Config& c) {
     adaptGain = c.getBool("course.adapt_gain", adaptGain);
     respTau = c.getDouble("course.response_tau_s", respTau);
     latencyS = c.getDouble("course.latency_s", latencyS);
+    cmdDelayS = c.getDouble("course.cmd_delay_s", cmdDelayS);
+    shapeTau = c.getDouble("course.shape_tau_s", shapeTau);
+    shapeMaxMs = c.getDouble("course.shape_max_ms", shapeMaxMs);
     tagCaptureM = c.getDouble("course.tag_capture_m", tagCaptureM);
     startCaptureM = c.getDouble("course.start_capture_m", startCaptureM);
     tagAssocM = c.getDouble("course.tag_assoc_m", tagAssocM);
@@ -201,10 +204,18 @@ void Navigator::courseCommand(const cv::Point2d& vel, const TelloState& st) {
     CourseState& c = cs_;
     const double g = std::max(1e-4, c.gain);
     cv::Point2d v = vel;
+    if (cp_.shapeTau > 0 && cp_.respTau > cp_.shapeTau) {
+        // The drone takes respTau to follow a command. Asking for more than is wanted, by what is still missing,
+        // makes it answer as if it took shapeTau.
+        cv::Point2d extra = (vel - c.bias - c.vPred) * (cp_.respTau / cp_.shapeTau - 1.0);
+        const double en = norm(extra);
+        if (en > cp_.shapeMaxMs) extra *= cp_.shapeMaxMs / en;
+        v += extra;
+    }
     if (cp_.headingFollow && st.valid && !c.yawHist.empty()) {
         // the direction was worked out in the picture, and the nose has turned since the picture was taken
         const double d = mu::deg2rad(mu::wrapDeg(st.yaw - yawAt(c.yawHist, now_ - cp_.latencyS, st.yaw)));
-        v = cv::Point2d(vel.x * std::cos(d) - vel.y * std::sin(d), vel.x * std::sin(d) + vel.y * std::cos(d));
+        v = cv::Point2d(v.x * std::cos(d) - v.y * std::sin(d), v.x * std::sin(d) + v.y * std::cos(d));
     }
     double fb = mu::clamp(v.x / g, -cp_.maxRc, cp_.maxRc), lr = mu::clamp(-v.y / g, -cp_.maxRc, cp_.maxRc);
     double ud = 0, h = st.heightCm();
@@ -229,6 +240,8 @@ void Navigator::courseCommand(const cv::Point2d& vel, const TelloState& st) {
     }
     sendRc(lr, fb, ud, yaw);
     c.vCmd = cv::Point2d(rc_.fb * g, -rc_.lr * g);   // what was really sent (after the slew limit)
+    c.cmdHist.emplace_back(now_, c.vCmd - c.bias);
+    while (c.cmdHist.size() > 2 && c.cmdHist.front().first < now_ - cp_.cmdDelayS - 1.0) c.cmdHist.pop_front();
 }
 
 void Navigator::courseTagReached(int id, const cv::Point2d& pos, const Observation& obs, int activeLine) {
@@ -270,7 +283,7 @@ void Navigator::courseTagReached(int id, const cv::Point2d& pos, const Observati
     if (courseChooseNext(obs, activeLine)) return;
     c.stage = CourseState::SeekNext;
     c.stageStart = now_;
-    c.seekRises = 0;
+    c.seekRises = 0; c.seekOverT = 0;
     setPhase(Phase::Search, "looking for the next line");
 }
 
@@ -338,7 +351,13 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
     const bool newFrame = obs.pathMode;
 
     // ---- how the drone moved: the stick commands seen through its response; heading from the telemetry
-    c.vModel += (c.vCmd - c.bias - c.vModel) * std::min(1.0, dt / std::max(0.05, cp_.respTau));
+    const double tauR = std::max(0.05, cp_.respTau);
+    auto sentAt = [&](double t) {             // the command that was on its way at time t
+        cv::Point2d u(0, 0);
+        for (const auto& e : c.cmdHist) { if (e.first > t) break; u = e.second; }
+        return u;
+    };
+    c.vModel += ((cp_.cmdDelayS > 0 ? sentAt(now_ - cp_.cmdDelayS - 0.5 * dt) : c.vCmd - c.bias) - c.vModel) * std::min(1.0, dt / tauR);
     c.vHist.emplace_back(now_, c.vModel);
     while (c.vHist.size() > 2 && c.vHist.front().first < now_ - 1.5) c.vHist.pop_front();
     const double tImg = now_ - cp_.latencyS;                 // when the image being used was taken
@@ -353,6 +372,13 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
             vPrev = e.second;
         }
         pd += vPrev * std::max(0.0, now_ - tPrev);
+    }
+    // What is sent now acts cmdDelayS from now: the commands already on their way say where the drone will be then.
+    c.vPred = c.vModel;
+    for (double s = 0; s < cp_.cmdDelayS - 1e-9; s += 0.02) {
+        const double h = std::min(0.02, cp_.cmdDelayS - s);
+        pd += c.vPred * h;
+        c.vPred += (sentAt(now_ + s - cp_.cmdDelayS) - c.vPred) * std::min(1.0, h / tauR);
     }
     // Everything seen is measured from the point straight under the camera (the mirror, at the nose). What has to be
     // on the tape and over the tags is the drone itself: its centre lies behind that point.
@@ -511,7 +537,7 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
             if (!courseChooseNext(obs, -1)) {
                 c.stage = CourseState::SeekNext;
                 c.stageStart = now_;
-                c.seekRises = 0;
+                c.seekRises = 0; c.seekOverT = 0;
                 setPhase(Phase::Search, "looking for the next line");
             }
             return;
@@ -532,9 +558,12 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
             if (cp_.headingFollow && now_ - c.stageStart > 0.6) c.yawRef = mu::wrapDeg(c.yawRef + 30.0 * dt);
             const cv::Point2d e = c.anchor - pd;
             const double d = norm(e);
-            courseCommand((d > 0.03 ? e * (std::min(0.2, 1.2 * d) / d) : cv::Point2d(0, 0)) + c.bias, st);
+            courseCommand((d > 0.03 ? e * (std::min(0.25, 1.5 * d) / d) : cv::Point2d(0, 0)) + c.bias, st);
             const double waited = now_ - c.stageStart;
-            if (c.seekRises < 2 && waited > 1.2 * (c.seekRises + 1)) {
+            // The next tape starts next to the tag: first get back over the tag (the drone may have run past it),
+            // and only then go up for a wider view.
+            if (d < 0.15) c.seekOverT += dt;
+            if (c.seekRises < 2 && (c.seekOverT > 1.0 * (c.seekRises + 1) || waited > 3.5 + 1.2 * c.seekRises)) {
                 ++c.seekRises;
                 c.altBoostCm += 30;
                 LOG_INFO("NAV no further tape in sight: rising 30 cm for a wider view");
@@ -829,7 +858,7 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
                 LOG_INFO("NAV no tag here and no further tape within %.1f m: looking around from higher up", cp_.nextSearchM);
                 c.stage = CourseState::SeekNext;
                 c.stageStart = now_;
-                c.seekRises = 0;
+                c.seekRises = 0; c.seekOverT = 0;
                 c.haveStart = false;
                 setPhase(Phase::Search, "the tape ends: looking for the next one");
             }
@@ -841,8 +870,8 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
 
     // ---- LINE 4: speed. Cruise; slow down for corners and for the points where the drone has to stop; never
     // outrun what is visible. Distances are shortened by what the drone still travels before a new command shows.
-    const double speedNow = norm(c.vModel);
-    const double lead = speedNow * cp_.respTau;
+    const double speedNow = norm(c.vPred);
+    const double lead = speedNow * (cp_.shapeTau > 0 ? std::min(cp_.shapeTau, cp_.respTau) : cp_.respTau);
     double v = cp_.vCruise, vStop = 1e9;
     if (!wps.empty()) {
         const Wp& w = wps.front();
@@ -880,7 +909,8 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
     const cv::Point2d dir = unit(target - p0);
     const cv::Point2d e = p0 - pd;                 // from the drone to the nearest point of the route
     if (li >= 0 && norm(e) < cp_.biasZoneM) {
-        c.bias += e * (cp_.kBias * dt);
+        // only what pushes the drone off the tape sideways is a drift: being a little behind along it is not
+        c.bias += (e - dir * e.dot(dir)) * (cp_.kBias * dt);
         const double bn = norm(c.bias);
         if (bn > cp_.biasMax) c.bias *= cp_.biasMax / bn;
     }

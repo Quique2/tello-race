@@ -47,6 +47,7 @@ void SimParams::load(const Config& c) {
     rcDeadband = c.getDouble("sim.rc_deadband", rcDeadband);
     imageGain = c.getDouble("sim.image_gain", imageGain);
     camAheadM = c.getDouble("sim.camera_ahead_m", camAheadM);
+    rcDelayS = c.getDouble("sim.rc_delay_s", rcDelayS);
 }
 
 Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackKind, const TagDetector& tagRenderer)
@@ -107,6 +108,11 @@ Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackK
 
 void Simulator::physicsStep(double dt) {
     if (!flying_) return;
+    while (!rcQueue_.empty() && rcQueue_.front().t <= t_ + 1e-9) {
+        const PendingRc& q = rcQueue_.front();
+        cmdVx_ = q.vx; cmdVy_ = q.vy; cmdVz_ = q.vz; cmdYaw_ = q.yaw;
+        rcQueue_.pop_front();
+    }
     double a = dt / p_.tau;
     const double vx0 = vxB_, vy0 = vyB_;
     vxB_ += (cmdVx_ - vxB_) * a;
@@ -160,7 +166,7 @@ void Simulator::moveBlocking(double dxB, double dyB, double dzB, double speedMs)
     double x0 = x_, y0 = y_, z0 = z_;
     double duration = dist / std::max(0.1, speedMs) + 0.8;
     double h = 1.0 / p_.fps, el = 0;
-    cmdVx_ = cmdVy_ = cmdVz_ = cmdYaw_ = 0;
+    cmdVx_ = cmdVy_ = cmdVz_ = cmdYaw_ = 0; rcQueue_.clear();
     while (el < duration) {
         double s = std::min(h, duration - el);
         el += s;
@@ -185,7 +191,7 @@ void Simulator::turnBlocking(double deg) {
     double actual = deg + nErr(rng_);
     double duration = std::fabs(deg) / 90.0 + 0.4;
     double h = 1.0 / p_.fps, el = 0, psi0 = psi_;
-    cmdVx_ = cmdVy_ = cmdVz_ = cmdYaw_ = 0;
+    cmdVx_ = cmdVy_ = cmdVz_ = cmdYaw_ = 0; rcQueue_.clear();
     vxB_ = vyB_ = 0;
     while (el < duration) {
         double s = std::min(h, duration - el);
@@ -276,10 +282,12 @@ bool Simulator::command(const std::string& cmd, std::string* reply, double) {
 void Simulator::rc(int lr, int fb, int ud, int yaw) {
     if (std::abs(fb) < p_.rcDeadband) fb = 0;
     if (std::abs(lr) < p_.rcDeadband) lr = 0;
-    cmdVx_ = mu::clamp(fb, -100, 100) * p_.rcVel;
-    cmdVy_ = -mu::clamp(lr, -100, 100) * (p_.rcVelLat > 0 ? p_.rcVelLat : p_.rcVel);
-    cmdVz_ = mu::clamp(ud, -100, 100) * p_.rcVz;
-    cmdYaw_ = -mu::clamp(yaw, -100, 100) * p_.rcYawRate;
+    const double vx = mu::clamp(fb, -100, 100) * p_.rcVel;
+    const double vy = -mu::clamp(lr, -100, 100) * (p_.rcVelLat > 0 ? p_.rcVelLat : p_.rcVel);
+    const double vz = mu::clamp(ud, -100, 100) * p_.rcVz;
+    const double vyaw = -mu::clamp(yaw, -100, 100) * p_.rcYawRate;
+    if (p_.rcDelayS > 0) { rcQueue_.push_back({t_ + p_.rcDelayS, vx, vy, vz, vyaw}); return; }
+    cmdVx_ = vx; cmdVy_ = vy; cmdVz_ = vz; cmdYaw_ = vyaw;
 }
 
 // The real Tello pushes its state about 10 times a second: between two packets the navigator sees the old one.

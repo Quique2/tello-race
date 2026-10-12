@@ -29,6 +29,9 @@ void LineParams::load(const Config& cfg) {
     whiteSMax = cfg.getInt("line.white_s_max", whiteSMax);
     whiteVMin = cfg.getInt("line.white_v_min", whiteVMin);
     whiteAuto = cfg.getBool("line.white_auto", whiteAuto);
+    tapeSAuto = cfg.getBool("line.tape_s_auto", tapeSAuto);
+    tapeSMin = cfg.getInt("line.tape_s_min", tapeSMin);
+    tapeSMargin = cfg.getInt("line.tape_s_margin", tapeSMargin);
     whiteDilatePx = cfg.getInt("line.white_dilate_px", whiteDilatePx);
     minWidthCm = cfg.getDouble("line.min_width_cm", minWidthCm);
     maxWidthCm = cfg.getDouble("line.max_width_cm", maxWidthCm);
@@ -100,7 +103,25 @@ void LineDetector::buildMask(const cv::Mat& bgr, const GroundProjector& proj,
             expo = std::min(1.0, v95 / 210.0);
         }
     }
-    auto darker = [&](cv::Scalar lo) { lo[2] = std::max(12.0, lo[2] * expo); return lo; };
+    int sLo = -1;
+    if (p_.whiteCheck && p_.tapeSAuto) {
+        int hs[256] = {0}, n = 0;
+        for (int y = 0; y < hsv_.rows; y += 4) {
+            const cv::Vec3b* row = hsv_.ptr<cv::Vec3b>(y);
+            for (int x = 0; x < hsv_.cols; x += 4)
+                if (row[x][2] >= vMinWhite && row[x][1] <= p_.whiteSMax) { ++hs[row[x][1]]; ++n; }
+        }
+        if (n > 200) {
+            int acc = 0, med = 0;
+            for (int s = 0; s < 256; ++s) { acc += hs[s]; if (acc >= n / 2) { med = s; break; } }
+            sLo = std::max(p_.tapeSMin, med + p_.tapeSMargin);
+        }
+    }
+    auto darker = [&](cv::Scalar lo) {
+        lo[2] = std::max(12.0, lo[2] * expo);
+        if (sLo >= 0) lo[1] = std::min(lo[1], (double)sLo);
+        return lo;
+    };
 
     if (p_.colorMode == "blue") {
         cv::inRange(hsv_, darker(p_.blueLo), p_.blueHi, mask_);

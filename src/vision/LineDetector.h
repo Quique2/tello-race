@@ -18,6 +18,10 @@ struct LineParams {
     bool whiteCheck = true;                // line must lie on the white strip
     int whiteSMax = 70, whiteVMin = 150, whiteDilatePx = 12;
     bool whiteAuto = false;                // the white surface may come out darker than whiteVMin (exposure, shade): follow it down
+    // A reflection washes the colour out of a glossy tape. With tapeSAuto the saturation limit of the tape colour comes
+    // down to just above the white surface's own saturation (never above the configured limit, never below tapeSMin).
+    bool tapeSAuto = false;
+    int tapeSMin = 34, tapeSMargin = 22;
     double minWidthCm = 1.0, maxWidthCm = 8.0;
     int morphOpen = 3, morphClose = 7;
     int minComponentArea = 60;

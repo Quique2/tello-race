@@ -41,6 +41,7 @@ struct SimParams {
     double rcDeadband = 0;   // stick values smaller than this do nothing
     double imageGain = 1.0;  // brightness of the picture (the real camera may expose a white floor much darker)
     double camAheadM = 0;    // the camera's viewpoint is this far ahead of the drone's centre (mirror at the nose)
+    double rcDelayS = 0;     // a stick command starts to act this long after it was sent (measured on the real drone: 0.3 s)
     void load(const Config& cfg);
 };
 
@@ -123,6 +124,8 @@ private:
     double x_ = 0, y_ = 0, z_ = 0, psi_ = 90, psi0_ = 90, zTarget_ = 0;
     double vxB_ = 0, vyB_ = 0, vz_ = 0, yawRate_ = 0;
     double cmdVx_ = 0, cmdVy_ = 0, cmdVz_ = 0, cmdYaw_ = 0;
+    struct PendingRc { double t, vx, vy, vz, yaw; };
+    std::deque<PendingRc> rcQueue_;   // sticks on their way to the motors (sim.rc_delay_s)
     double driftX_ = 0, driftY_ = 0;
     double bodyPitch_ = 0, bodyRoll_ = 0, leanAx_ = 0, leanAy_ = 0;
     bool flying_ = false;

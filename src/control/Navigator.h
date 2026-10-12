@@ -74,7 +74,10 @@ struct CourseParams {
     double rcGain = 0.015;                // m/s per stick unit (start value; measured in flight when adaptGain)
     bool adaptGain = true;
     double respTau = 0.35;                // s, how fast the drone follows a new stick command
-    double latencyS = 0.20;               // s, age of the image when the command reaches the drone
+    double latencyS = 0.20;               // s, age of the image when it is used
+    double cmdDelayS = 0;                 // s, a stick command starts to act this long after it was sent
+    double shapeTau = 0;                  // s, > 0: the sticks are overdriven so that the drone answers this fast
+    double shapeMaxMs = 0.35;             // m/s, the most that overdrive may add
     double tagCaptureM = 0.05, startCaptureM = 0.06, tagAssocM = 0.45, nextSearchM = 1.0, firstSearchM = 1.2;
     double lostCoastS = 0.35, lostLandS = 5.0, endWaitS = 1.5;
     double finishCenterM = 0.035, finishCenterMaxS = 2.5;
@@ -192,6 +195,8 @@ private:
         std::vector<TagMem> tags;
         // motion model: the commanded velocity seen through the drone's response, and its recent history
         cv::Point2d vCmd, vModel;
+        cv::Point2d vPred;                           // modelled velocity when a command sent now starts to act
+        std::deque<std::pair<double, cv::Point2d>> cmdHist;   // what was sent and when: it acts cmdDelayS later
         std::deque<std::pair<double, cv::Point2d>> vHist;
         double gain = 0.015;
         int reversedCount = 0, gainSamples = 0;
@@ -202,6 +207,7 @@ private:
         double altBoostCm = 0, lastTraceT = -1e9;
         bool finalDescent = false;                   // on the last stretch: flying at the finish height
         int seekRises = 0;
+        double seekOverT = 0;                        // time spent over the tag while looking for the next tape
     } cs_;
     Phase phase_ = Phase::Idle;
     double phaseStart_ = 0, missionStart_ = 0, lastStep_ = 0, now_ = 0, prevStep_ = 0, blindUntil_ = -1e9;
