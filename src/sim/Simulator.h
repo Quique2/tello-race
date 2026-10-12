@@ -42,6 +42,8 @@ struct SimParams {
     double imageGain = 1.0;  // brightness of the picture (the real camera may expose a white floor much darker)
     double camAheadM = 0;    // the camera's viewpoint is this far ahead of the drone's centre (mirror at the nose)
     double rcDelayS = 0;     // a stick command starts to act this long after it was sent (measured on the real drone: 0.3 s)
+    bool inertial = false;   // true: while the nose turns, the drone keeps moving the way it was going over the floor
+                             // (as a real one does) and only comes round with its response time
     void load(const Config& cfg);
 };
 

@@ -48,6 +48,7 @@ void SimParams::load(const Config& c) {
     imageGain = c.getDouble("sim.image_gain", imageGain);
     camAheadM = c.getDouble("sim.camera_ahead_m", camAheadM);
     rcDelayS = c.getDouble("sim.rc_delay_s", rcDelayS);
+    inertial = c.getBool("sim.inertial", inertial);
 }
 
 Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackKind, const TagDetector& tagRenderer)
@@ -131,6 +132,11 @@ void Simulator::physicsStep(double dt) {
     res_.pathLen += std::hypot(vxW, vyW) * dt;
     z_ = std::max(0.0, z_ + vz_ * dt);
     psi_ = mu::wrapDeg(psi_ + yawRate_ * dt);
+    if (p_.inertial) {       // the velocity is kept over the floor, so in the body's axes it turns the other way
+        const double d = mu::deg2rad(-yawRate_ * dt), vx = vxB_, vy = vyB_;
+        vxB_ = vx * std::cos(d) - vy * std::sin(d);
+        vyB_ = vx * std::sin(d) + vy * std::cos(d);
+    }
     // tilt: what holds the speed against the drag, plus what it takes to accelerate (the airframe leans first, the speed follows)
     if (dt > 1e-9) {
         const double k = std::min(1.0, dt / std::max(1e-3, p_.leanTau));

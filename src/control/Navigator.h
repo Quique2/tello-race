@@ -196,6 +196,8 @@ private:
         // motion model: the commanded velocity seen through the drone's response, and its recent history
         cv::Point2d vCmd, vModel;
         cv::Point2d vPred;                           // modelled velocity when a command sent now starts to act
+        cv::Point2d vW;                              // the modelled velocity in a frame that does not turn with the nose
+        double yawRate = 0;                          // deg/s, how fast the nose is turning (telemetry)
         std::deque<std::pair<double, cv::Point2d>> cmdHist;   // what was sent and when: it acts cmdDelayS later
         std::deque<std::pair<double, cv::Point2d>> vHist;
         double gain = 0.015;

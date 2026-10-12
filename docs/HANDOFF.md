@@ -26,6 +26,19 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-10-12 evening (laptop) a recorded real flight; controller rebuilt around the measured response; glare
+* The user asked for a live run: started from the laptop with RECORD on (he was next to the drone). 4/4 tags, 38 s,
+  with overshoots and a wobble. Recording on the Pi: `logs/run_20261012_140921.{avi,csv,log}`.
+* From it (`tools/flight_response.py`): the drone does nothing for 0.5 s after a stick change, then follows with a
+  0.75 s time constant, 0.0135 m/s per unit. The profile carries that for the simulator ([sim] tau, rc_delay_s,
+  rc_vel_ms, inertial) and for the navigator ([course] cmd_delay_s, response_tau_s, latency_s, shape_tau_s).
+  Details and numbers: docs/COURSE_TEC.md "The recorded flight and what it changed".
+* Also: `line.tape_s_auto` (reflection on the tape), return over the tag before rising, sideways-only drift
+  integral, nose-follows-path made turn-aware. Simulator with the real response: both nose modes 20/20.
+* Nothing of this has flown yet. Next real flights: RECORD on, one in each nose mode, then run the fit again (the
+  path mode will show how the yaw answers).
+* Pi: pulled and rebuilt from the laptop over the cable. `drone-watch` restarted, waiting for the drone.
+
 ### 2026-10-12 afternoon (laptop) first real course flights; nose-follows-path mode with a switch; fixes from the flight log
 * The user flew five missions from the page (nose fixed). Fifth one complete: tags 1-2-3-4, landed on tag 4,
   28.7 s. The other four and what was changed are listed in docs/COURSE_TEC.md ("The first real flights"): range

@@ -115,6 +115,11 @@ which shortens the landing.
 
 ## What the simulator says
 
+> The numbers in this section and the two after it were made before the real drone's answer to the sticks was
+> measured. The simulator of that day answered about three times faster than the real drone does, so its times
+> are too good by a few seconds and its path errors by a centimetre or two. The comparisons between settings
+> still hold. Current numbers: "The two nose modes" and "The recorded flight" below.
+
 The simulator flies the photographed course itself (the photo is rectified with the four tags and used as the
 floor), with motion blur, 130 ms of video latency, telemetry at 10 Hz in whole degrees, a drone that leans when it
 accelerates, a start position off by 5 cm and 5°, an unknown stick gain (configured 0.015, real 0.020 m/s per
@@ -218,14 +223,16 @@ not been tried on the real drone; keep the resolution `high` (the vision expects
 
 | | fixed | follows the path |
 |---|---|---|
-| simulator, later flights, mirror at 93° as measured (20 each) | 20 / 20, 25.5 s, 1.8 cm | 20 / 20, 27.0 s, 2.2 cm |
-| simulator, first flight (20 each) | 20 / 20, 29.6 s | 20 / 20, 32.9 s |
+| simulator with the real drone's response, later flights (20 each) | 20 / 20, 26.6 s, 3.1 cm | 20 / 20, 27.6 s, 3.7 cm |
+| the same, first flight (20 each) | 20 / 20, 34.3 s | 20 / 20, 34.5 s |
 
 With the nose fixed the camera's long side (it sees further behind than ahead) looks along whatever direction the
 drone happens to travel in; with the nose on the path the short side always looks ahead, so every tag comes into
 view late and is approached slowly, and at a tag the drone may turn on the spot to find the next tape. That is
-where the 1.5 s go. `course.heading_look_m` (how far ahead the nose aims) and `course.max_yaw_rc` (how fast it
-turns) shape how it looks.
+where the extra second goes. `course.heading_look_m` (how far ahead the nose aims) and `course.max_yaw_rc` (how
+fast it turns, 40) shape how it looks. A drone keeps going the way it was moving while its nose swings round, so the
+navigator's motion model lives in a frame that does not turn, and the stick direction is worked out for the heading
+the nose will have when the command acts.
 
 `course.camera_ahead_m = 0.06`: the mirror looks down from 6 cm ahead of the drone's centre. It is the centre that
 is kept on the tape and over the tags, in both modes.
@@ -250,11 +257,60 @@ telemetry pitch and roll both count the lean the way the model assumes; stick ga
 tape, tags and the white tarp are seen as in the simulator; 23-24 frames a second on the Pi in flight. The drone's
 board went from 42 to 77 °C over those ten minutes: switch it off between flights.
 
+## The recorded flight and what it changed (2026-10-12)
+
+A sixth mission was started from the laptop with the station recording (`logs/run_20261012_140921.avi/.csv/.log` on
+the Pi): tags 1-2-3-4, landed on tag 4, 38.3 s. It ran 36 cm past tag 1, circled tag 2 for 5 s with a 25 cm wobble,
+left the third tape by 30 cm at a corner and ran 40 cm past tag 3, off the tarp, where it rose twice before it
+found the last tape again.
+
+**The drone answers the sticks far more slowly than assumed.** The recording has the tags in the picture (their
+true motion) and the sticks that were sent. `tools/flight_response.py` fits the response:
+
+| | sideways | forwards | what the controller assumed |
+|---|---|---|---|
+| nothing happens for | 0.51 s | 0.5 - 0.6 s | 0.13 s |
+| then 63 % of the new speed after | 0.80 s | 0.5 - 0.75 s | 0.5 s |
+| speed per stick unit | 0.0133 m/s | 0.012 - 0.014 m/s | 0.0112 (learned in flight) |
+| drift with the sticks at rest | 1 cm/s | 2 cm/s | |
+
+Of the dead time, 0.15 s is the age of the picture (the height sensor and the tag size in the picture, compared
+during the climb, are 0.06 - 0.10 s apart); the rest is the drone. The fit reproduces the tag tracks to 1 - 3 cm;
+the response the controller believed in is off by 6 - 12 cm on the same tracks. With that response in the simulator
+(`sim.tau`, `sim.rc_delay_s`, `sim.rc_vel_ms`, now in the profile) the controller as flown completes 3 flights of 12.
+
+What the navigator does about it:
+
+* `course.cmd_delay_s = 0.35`, `course.response_tau_s = 0.75`, `course.latency_s = 0.15`: the commands already on
+  their way say where the drone will be, and how fast, at the moment a new command starts to act. Everything
+  (preview point, braking, "over the tag") is worked out for that moment;
+* `course.shape_tau_s = 0.3`: the sticks ask for more than is wanted, by what is still missing, so the drone answers
+  as if its time constant were 0.3 s;
+* the drift integral takes only the sideways part of the error and is small (`k_bias = 0.3`, at most 6 cm/s): in the
+  flight it had wound up to 9 cm/s forwards from being behind along the tape, and pushed the drone past the tags.
+
+Checked in the simulator against a drone 30 % slower or faster than measured, a stick gain of 0.010 - 0.017, a
+yaw that answers half or twice as fast, and sticks below 8 units doing nothing: 12 of 12 flights each (11 of 12 in
+two of the cases). Not known: whether small sticks really do less than their share. While searching after tag 3 the
+drone was sent -10 forwards for 3 s and moved at 5 cm/s, a third of what the fit says; it was climbing at the time.
+
+**A lamp's reflection washes the tape pale.** The first 25 cm of the tape after tag 1 came out light blue
+(saturation 35 - 79, the limit was 80) and the colour mask lost them; where the reflection sat moved with the drone,
+so the "start of the next tape" ran away from it for two seconds. `line.tape_s_auto = true`: the saturation limit
+comes down to just above the tarp's own saturation (median + 22, here 37; never above the configured limit). The
+tarp's 95th percentile was 25. The dark floor beyond the tarp stays out of the mask.
+
+**After a tag with no next tape in sight** the drone now returns over the tag first and only then rises for a wider
+view (the next tape starts next to the tag).
+
 ## Not verified on the real drone yet
 
-* the nose-follows-path mode has only flown in the simulator;
-* the fixes above have only flown in the simulator;
-* how quickly the real drone answers the sticks (`course.response_tau_s = 0.5` is still the careful guess).
+* everything in "The recorded flight" above: the new controller, the paler tape limit and the return over the tag
+  have flown in the simulator only;
+* the nose-follows-path mode has only flown in the simulator, and how the real drone's yaw answers is not measured
+  (record a flight in that mode: the same fit will tell).
+
+To record a flight: press RECORD on the page before START (video, telemetry table and log go to `logs/` on the Pi).
 
 ## Another course from another photo
 

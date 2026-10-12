@@ -214,7 +214,8 @@ void Navigator::courseCommand(const cv::Point2d& vel, const TelloState& st) {
     }
     if (cp_.headingFollow && st.valid && !c.yawHist.empty()) {
         // the direction was worked out in the picture, and the nose has turned since the picture was taken
-        const double d = mu::deg2rad(mu::wrapDeg(st.yaw - yawAt(c.yawHist, now_ - cp_.latencyS, st.yaw)));
+        // ... and will have turned further by the time this command acts
+        const double d = mu::deg2rad(mu::wrapDeg(st.yaw + c.yawRate * cp_.cmdDelayS - yawAt(c.yawHist, now_ - cp_.latencyS, st.yaw)));
         v = cv::Point2d(v.x * std::cos(d) - v.y * std::sin(d), v.x * std::sin(d) + v.y * std::cos(d));
     }
     double fb = mu::clamp(v.x / g, -cp_.maxRc, cp_.maxRc), lr = mu::clamp(-v.y / g, -cp_.maxRc, cp_.maxRc);
@@ -357,8 +358,27 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
         for (const auto& e : c.cmdHist) { if (e.first > t) break; u = e.second; }
         return u;
     };
-    c.vModel += ((cp_.cmdDelayS > 0 ? sentAt(now_ - cp_.cmdDelayS - 0.5 * dt) : c.vCmd - c.bias) - c.vModel) * std::min(1.0, dt / tauR);
-    c.vHist.emplace_back(now_, c.vModel);
+    double dyaw = 0;
+    if (st.valid) {
+        if (c.yawValid) dyaw = mu::wrapDeg(st.yaw - c.lastYaw);
+        c.lastYaw = st.yaw;
+        c.yawValid = true;
+        c.yawHist.emplace_back(now_, st.yaw);
+        while (c.yawHist.size() > 2 && c.yawHist.front().first < now_ - 2.0) c.yawHist.pop_front();
+    }
+    // With the nose turning, a stick command acts along wherever the nose points when it acts, and what the drone
+    // already moves at keeps its direction over the floor. So the model lives in a frame that does not turn (the
+    // telemetry heading says how the nose stands in it); with the nose fixed the two frames are the same.
+    const bool turning = cp_.headingFollow && st.valid;
+    c.yawRate = turning && c.yawHist.size() >= 2 ? mu::wrapDeg(st.yaw - yawAt(c.yawHist, now_ - 0.3, st.yaw)) / 0.3 : 0.0;
+    auto psi = [&](double t) { return !turning ? 0.0 : t <= now_ ? yawAt(c.yawHist, t, st.yaw) : st.yaw + c.yawRate * (t - now_); };
+    auto turn = [](const cv::Point2d& p, double deg) {
+        const double a = mu::deg2rad(deg);
+        return cv::Point2d(p.x * std::cos(a) - p.y * std::sin(a), p.x * std::sin(a) + p.y * std::cos(a));
+    };
+    c.vW += (turn(cp_.cmdDelayS > 0 ? sentAt(now_ - cp_.cmdDelayS - 0.5 * dt) : c.vCmd - c.bias, -psi(now_ - 0.5 * dt)) - c.vW) * std::min(1.0, dt / tauR);
+    c.vModel = turn(c.vW, psi(now_));
+    c.vHist.emplace_back(now_, c.vW);
     while (c.vHist.size() > 2 && c.vHist.front().first < now_ - 1.5) c.vHist.pop_front();
     const double tImg = now_ - cp_.latencyS;                 // when the image being used was taken
     cv::Point2d vThen = c.vHist.front().second, pd(0, 0);    // velocity then; how far the drone went since
@@ -374,23 +394,19 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
         pd += vPrev * std::max(0.0, now_ - tPrev);
     }
     // What is sent now acts cmdDelayS from now: the commands already on their way say where the drone will be then.
-    c.vPred = c.vModel;
+    c.vPred = c.vW;
     for (double s = 0; s < cp_.cmdDelayS - 1e-9; s += 0.02) {
         const double h = std::min(0.02, cp_.cmdDelayS - s);
         pd += c.vPred * h;
-        c.vPred += (sentAt(now_ + s - cp_.cmdDelayS) - c.vPred) * std::min(1.0, h / tauR);
+        c.vPred += (turn(sentAt(now_ + s - cp_.cmdDelayS), -psi(now_ + s)) - c.vPred) * std::min(1.0, h / tauR);
     }
+    // ... all of it as seen in the picture being used
+    pd = turn(pd, psi(tImg));
+    vThen = turn(vThen, psi(tImg));
+    c.vPred = turn(c.vPred, psi(tImg));
     // Everything seen is measured from the point straight under the camera (the mirror, at the nose). What has to be
     // on the tape and over the tags is the drone itself: its centre lies behind that point.
     pd.x -= cp_.camAheadM;
-    double dyaw = 0;
-    if (st.valid) {
-        if (c.yawValid) dyaw = mu::wrapDeg(st.yaw - c.lastYaw);
-        c.lastYaw = st.yaw;
-        c.yawValid = true;
-        c.yawHist.emplace_back(now_, st.yaw);
-        while (c.yawHist.size() > 2 && c.yawHist.front().first < now_ - 2.0) c.yawHist.pop_front();
-    }
     const double ca = std::cos(mu::deg2rad(dyaw)), sa = std::sin(mu::deg2rad(dyaw));
     auto rot = [&](const cv::Point2d& p) { return cv::Point2d(p.x * ca - p.y * sa, p.x * sa + p.y * ca); };
     auto move = [&](const cv::Point2d& p) { return rot(p - vThen * dt); };   // floor point: previous image frame -> this one
