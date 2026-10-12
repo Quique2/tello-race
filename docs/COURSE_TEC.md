@@ -187,7 +187,9 @@ squares of the right size, and over the whole frame once a second as a safety ne
 `tag.full_frame_every_s`). The tape is traced at half the camera width (`line.proc_width = 480`): half the cost,
 same tracking in the simulator (10/10 flights, 2.1 cm).
 
-It has not been measured on the Pi yet. No drone is needed for that:
+On the Pi 5 itself (headless simulator, 2026-10-12): **4.2 ms per frame** with the profile (tags 1.6 ms, tape
+2.5 ms) against 19.5 ms the old way (tags 14.0 ms, tape 5.4 ms). Flying the simulated course in real time and
+serving the page to a browser, the Pi kept 26 frames a second. To repeat it, no drone needed:
 
 ```
 ./build/tello_race sim --headless --no-realtime --profile config/course_tec.ini --track courses/tec_tarp --episodes 1 --seed 1 | grep "vision cost"

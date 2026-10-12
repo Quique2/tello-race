@@ -26,6 +26,22 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-10-12 (laptop) course mode deployed to the Pi over the cable; ready for the first real flight
+* Pi at cf9fd6a+, rebuilt, `~/.config/drone-watch.env` now starts the station with
+  `--profile config/course_tec.ini --log-level debug --set tello.wifi_ifname=wlan1 --set camera.flip=vertical`.
+  **Gotcha:** `drone_watch.sh` reads GROUND_STATION_ARGS only when the service starts, so after editing the env
+  file run `systemctl --user restart drone-watch` (done; the journal line "started: waiting for TELLO-FE18DB ...
+  tello_race options: --profile ..." confirms what it will use). No `config/learned_course_tec.ini` yet: the
+  first flight measures the mirror at tag 1.
+* Vision measured on the Pi (headless sim): 4.2 ms per frame with the profile (tags 1.6, tape 2.5) against
+  19.5 ms the old way. Real-time sim with the page open: 26 fps.
+* Access checked end to end with a simulated station on the Pi's port 8080: page, state stream and video through
+  the cable (`http://192.168.137.10:8080`), through the laptop's ssh tunnel (127.0.0.1:8082) and through the
+  laptop's `tailscale serve` (`http://bulmacompu.tail2b1864.ts.net:8081`). The Pi itself has no internet on this
+  network and its Tailscale is logged out, so the Funnel URL does not work today.
+* Still nobody has seen the blue tape through the real camera. Before the first START: hold the drone about a
+  metre over the tape and a tag and look at the page (thin white lines along the tape, tag outlined).
+
 ### 2026-10-11 (laptop) course mode: follow the tape from above with the ORIGINAL mirror clip; blue/yellow switch; self-calibration
 * **What changed for the user.** He flies the original clip again (`Tello_Mirror_Clip_2.STL`, camera straight
   down, 96-99 deg) on a new course: white tarp, blue path, yellow decoy tapes, tags 1-2-3-4 where the tag turn
