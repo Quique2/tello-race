@@ -40,6 +40,7 @@ struct SimParams {
     double focalScale = 1.0; // the true focal length is this times camera.fx / fy
     double rcDeadband = 0;   // stick values smaller than this do nothing
     double imageGain = 1.0;  // brightness of the picture (the real camera may expose a white floor much darker)
+    double camAheadM = 0;    // the camera's viewpoint is this far ahead of the drone's centre (mirror at the nose)
     void load(const Config& cfg);
 };
 

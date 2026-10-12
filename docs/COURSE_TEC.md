@@ -26,7 +26,9 @@ one (`nav.mode = course`):
 * the drone follows the tape it is on, slows down for corners, flies over the tag at its end, crosses to the
   nearest other tape end (the start of the next segment) and goes on, in the order `course.tag_order`;
 * it lands on the last tag;
-* it never turns: it keeps the heading it had on the ground and moves forwards, sideways and backwards.
+* the nose either stays where it pointed at take-off, the drone moving forwards, sideways and backwards
+  (`course.heading = fixed`), or turns to point along the route (`course.heading = path`). The path following
+  underneath is the same; the page switches between the two.
 
 The turn meaning of the tags (ID1 forward, ID2 left, ID3 right) is **not** used: on this course it does not match
 the layout (after ID3 the path leaves about 100° to the left). The rule is "follow the chosen colour, visit the
@@ -44,8 +46,9 @@ tello_race fly --profile config/course_tec.ini --set web.enabled=1
 
 On the ground-station page the panel **Path to follow** has three buttons, BLUE / YELLOW / BLACK. The video shows
 which one is active ("FOLLOW BLUE") and draws the route the drone is following in that colour, with a green cross
-on the next tag or line start. The colour can be changed on the ground or in MANUAL, not while the mission flies.
-Keys in the desktop window: `b`, `y`, `k`.
+on the next tag or line start. Under them, **NOSE FIXED / NOSE FOLLOWS PATH** chooses whether the drone keeps its
+take-off heading or turns with the route (the video label says `NOSE: FIXED` or `NOSE: PATH`). Both can be changed
+on the ground or in MANUAL, not while the mission flies. Keys in the desktop window: `b`, `y`, `k`, and `n` for the nose.
 
 ## Placing the drone
 
@@ -211,17 +214,47 @@ not been tried on the real drone; keep the resolution `high` (the vision expects
 * more than `course.max_range_m` (3.5 m) from where it took off;
 * battery under 25 % at the start; LAND or EMERGENCY from the page at any time.
 
+## The two nose modes
+
+| | fixed | follows the path |
+|---|---|---|
+| simulator, later flights, mirror at 93° as measured (20 each) | 20 / 20, 25.5 s, 1.8 cm | 20 / 20, 27.0 s, 2.2 cm |
+| simulator, first flight (20 each) | 20 / 20, 29.6 s | 20 / 20, 32.9 s |
+
+With the nose fixed the camera's long side (it sees further behind than ahead) looks along whatever direction the
+drone happens to travel in; with the nose on the path the short side always looks ahead, so every tag comes into
+view late and is approached slowly, and at a tag the drone may turn on the spot to find the next tape. That is
+where the 1.5 s go. `course.heading_look_m` (how far ahead the nose aims) and `course.max_yaw_rc` (how fast it
+turns) shape how it looks.
+
+`course.camera_ahead_m = 0.06`: the mirror looks down from 6 cm ahead of the drone's centre. It is the centre that
+is kept on the tape and over the tags, in both modes.
+
+## The first real flights (2026-10-12)
+
+Five missions with the nose fixed, from the page. The fifth flew the whole course, tags 1-2-3-4 and a landing on
+tag 4, in 28.7 s. What the Pi's log showed about the other four, and what was changed:
+
+* two were ended by the range limit ("3.5 m from the take-off point") while inside the course: the dead reckoning
+  it relies on over-reads by half when the stick gain is still the guess. Limit now 6 m;
+* after a tag the next tape was sometimes taken to be the far end of a piece of the tape just flown (the real tape
+  breaks into pieces under glare and where the yellow one crosses it). A tape now qualifies only if it runs away
+  from the tag;
+* while waiting over a tag for the next tape to come into sight, the drone held a remembered point and drifted off
+  it. It now holds on the tag it sees;
+* the mirror measurement at tag 1 ran again on a later flight. Once per run now;
+* the drone flew with the point under the camera on the tape, not its own centre (6 cm behind). See above.
+
+Measured on the real drone: mirror 92.5-94.3° pitch, 1-2.4° roll (the fit moves about 1° from flight to flight);
+telemetry pitch and roll both count the lean the way the model assumes; stick gain 0.010-0.015 m/s per unit; blue
+tape, tags and the white tarp are seen as in the simulator; 23-24 frames a second on the Pi in flight. The drone's
+board went from 42 to 77 °C over those ten minutes: switch it off between flights.
+
 ## Not verified on the real drone yet
 
-Everything above is simulation. The real unknowns, and what covers them:
-
-* which way the telemetry counts pitch and roll: the lean is left out of the floor model until the tags have
-  shown it (at tag 1 on the first flight), then kept in the learned file;
-* the stick gain: measured in flight from how the tags move, kept in the learned file;
-* how the real camera renders the white tarp and the blue tape: the brightness limits follow the exposure down
-  (`line.white_auto`), the hue limits do not. Check the inset on the page before the first flight;
-* whether the Tello's own position hold drifts over a plain white tarp: the navigator holds against a steady
-  drift, and the simulator flies with 8 cm/s of it.
+* the nose-follows-path mode has only flown in the simulator;
+* the fixes above have only flown in the simulator;
+* how quickly the real drone answers the sticks (`course.response_tau_s = 0.5` is still the careful guess).
 
 ## Another course from another photo
 

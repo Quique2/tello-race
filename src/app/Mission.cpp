@@ -81,6 +81,7 @@ private:
     void applyWebCommand(const WebCommand& c);
     void setManual(bool on);
     void setLineColor(const std::string& name);
+    void setHeading(const std::string& name);
 
     IDrone& drone_;
     IFrameSource& src_;
@@ -438,6 +439,7 @@ void MissionLoop::applyWebCommand(const WebCommand& c) {
         else { simRestart_ = c.arg.empty() ? "same" : c.arg; abortEpisode_ = true; notice("simulation restarting: " + simRestart_); }
     }
     else if (c.cmd == "linecolor") setLineColor(c.arg);
+    else if (c.cmd == "heading") setHeading(c.arg);
     else if (c.cmd == "camera") handleKey('v');
     else if (c.cmd == "tag") handleKey('0' + std::max(0, std::min(3, atoi(c.arg.c_str()))));
 }
@@ -484,6 +486,16 @@ void MissionLoop::setLineColor(const std::string& name) {
     notice("now following the " + perception_.lineDetector().color() + " tape");
 }
 
+// Course mode: does the nose stay where it pointed at take-off, or turn with the route? Same rule as the colour:
+// not while a mission is in the air.
+void MissionLoop::setHeading(const std::string& name) {
+    if (name != "fixed" && name != "path") { notice("unknown heading mode '" + name + "' (fixed or path)"); return; }
+    if (!nav_.courseMode()) { notice("heading mode only applies to the course profile"); return; }
+    if (!manual_ && nav_.flying()) { notice("heading mode not changed: the mission is flying (land, or switch to MANUAL first)"); return; }
+    nav_.setCourseHeadingFollow(name == "path");
+    notice(name == "path" ? "the nose will turn with the path" : "the nose will keep its take-off heading");
+}
+
 void MissionLoop::setManual(bool on) {
     if (on == manual_) return;
     manual_ = on;
@@ -507,6 +519,7 @@ std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st,
     s.notice = notice_; s.noticeId = noticeId_;
     s.mirror = flipName_;
     s.lineColor = perception_.lineDetector().color();
+    s.heading = nav_.courseHeadingFollow() ? "path" : "fixed";
     s.course = nav_.courseMode();
     s.nextTag = nav_.nextTagId();
     s.speed = nav_.speedMs();
@@ -549,6 +562,7 @@ bool MissionLoop::handleKey(int key) {
         case 'b': setLineColor("blue"); return true;
         case 'y': setLineColor("yellow"); return true;
         case 'k': setLineColor("dark"); return true;
+        case 'n': setHeading(nav_.courseHeadingFollow() ? "fixed" : "path"); return true;   // nose: fixed <-> along the path
         case 'v': {   // toggle front / belly camera (SDK 3.0 "downvision"); the stream is reopened
             auto* td = dynamic_cast<TelloDrone*>(&drone_);
             if (!td) { LOG_INFO("camera switch is only available on the real drone"); return true; }
@@ -613,6 +627,7 @@ void MissionLoop::drawHud(cv::Mat& canvas, const Observation& obs, const TelloSt
     const cv::Scalar colBgr = colName == "blue" ? cv::Scalar(255, 120, 0) : colName == "yellow" ? cv::Scalar(0, 220, 255) : cv::Scalar(60, 60, 60);
     {
         std::string label = "FOLLOW " + std::string(colName == "blue" ? "BLUE" : colName == "yellow" ? "YELLOW" : colName == "dark" ? "BLACK" : "HSV");
+        if (nav_.courseMode()) label += nav_.courseHeadingFollow() ? "  NOSE: PATH" : "  NOSE: FIXED";
         int base = 0;
         cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.6, 2, &base);
         cv::Rect box(canvas.cols - ts.width - 22, 124, ts.width + 16, ts.height + 12);
@@ -763,6 +778,7 @@ int runSim(const Config& cfg, const MissionOptions& opt) {
                 else if (k == "alt") live.set("mission.altitude_cm", v);
                 else if (k == "track") o.track = v.empty() ? "random" : v;
                 else if (k == "color") live.set("line.color_mode", v);
+                else if (k == "heading") live.set("course.heading", v);
                 else if (k == "seed") o.seed = (uint64_t)std::max(0LL, atoll(v.c_str()));
             }
             LOG_INFO("simulation restarted from the page: %s -> pitch %s deg, altitude %s cm, track %s, seed %llu", req.c_str(),

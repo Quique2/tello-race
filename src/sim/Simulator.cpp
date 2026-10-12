@@ -46,6 +46,7 @@ void SimParams::load(const Config& c) {
     focalScale = c.getDouble("sim.focal_scale", focalScale);
     rcDeadband = c.getDouble("sim.rc_deadband", rcDeadband);
     imageGain = c.getDouble("sim.image_gain", imageGain);
+    camAheadM = c.getDouble("sim.camera_ahead_m", camAheadM);
 }
 
 Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackKind, const TagDetector& tagRenderer)
@@ -378,8 +379,8 @@ cv::Mat Simulator::render() {
             if (dbz > -1e-4) { mx[u] = -1; my[u] = -1; continue; }
             double t = -z_ / dbz;
             if (t > 60.0) { mx[u] = -1; my[u] = -1; continue; }
-            double gx = x_ + t * (c * dbx - s * dby);
-            double gy = y_ + t * (s * dbx + c * dby);
+            double gx = x_ + p_.camAheadM * c + t * (c * dbx - s * dby);
+            double gy = y_ + p_.camAheadM * s + t * (s * dbx + c * dby);
             mx[u] = (float)(half + gx * ppm);
             my[u] = (float)(half - gy * ppm);
         }

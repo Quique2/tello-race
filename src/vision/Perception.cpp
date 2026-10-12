@@ -665,6 +665,7 @@ void Perception::solvePlane() {
     const bool first = !calib_.applied;
     if (calib_.applied && std::fabs(pitch - calib_.pitchDeg) < 0.3 && std::fabs(roll - calib_.rollDeg) < 0.3) ++calibStable_;
     else calibStable_ = 0;
+    if (calib_.applied && used >= 40 && calibStable_ >= 2) mountSettled_ = true;
     calib_.samples = used;
     calib_.pitchDeg = pitch;
     calib_.rollDeg = roll;

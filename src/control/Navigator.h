@@ -62,6 +62,12 @@ struct CourseParams {
     bool calibAtFirstTag = true;          // camera angle not known yet: measure it over the first tag before going on
     double mountPitchMinDeg = 84, mountPitchMaxDeg = 104;   // outside this the camera is blind behind / ahead of the drone: land
     double traceHz = 5;                   // debug log: this many lines a second about what the navigator is doing (0 = none)
+    // course.heading = fixed: the drone keeps the heading it took off with and moves sideways / backwards as needed.
+    // course.heading = path: the nose turns to point along the route. Same path following underneath.
+    bool headingFollow = false;
+    double headingLookM = 0.25;           // the nose aims at the route this far beyond the preview point
+    double maxYawRc = 60;                 // yaw stick limit while turning with the path
+    double camAheadM = 0.06;              // the camera looks down from the mirror, this far ahead of the drone's centre
     double maxRangeM = 0;                 // > 0: land when the drone seems to be further than this from where it took off
     double accel = 0.7, latAccel = 0.5;                                      // m/s^2: braking and cornering limits
     double cornerBaseM = 0.075;           // m: a corner is measured between two chords of this length
@@ -116,6 +122,8 @@ public:
     double speedMs() const;                   // modelled ground speed
     double rcGain() const { return cs_.gain; }
     bool rcGainMeasured() const { return cs_.gainSamples >= 20; }
+    bool courseHeadingFollow() const { return cp_.headingFollow; }       // nose along the route (true) or fixed (false)
+    void setCourseHeadingFollow(bool on) { cp_.headingFollow = on; }
 
 private:
     void setPhase(Phase ph, const char* why);
@@ -163,11 +171,11 @@ private:
     NavParams p_;
     CourseParams cp_;
     bool courseMode_ = false;
+    bool courseCalibDone_ = false;        // the camera angle was measured over a tag in an earlier flight of this run
     struct CourseState {
         enum Stage { First, Line, SeekNext, Finish, Calib } stage = First;
         int calibLeg = 0;                            // step of the manoeuvre that measures the camera angle over a tag
         double calibLegStart = 0;
-        bool calibDone = false;
         int k = 0;                                   // index in cp_.order of the next tag
         double stageStart = 0, lastT = 0, lastRouteT = 0, endSince = -1, blindUntil = -1e9;
         // memory in the body frame, moved every frame by the motion estimate
@@ -189,6 +197,8 @@ private:
         int reversedCount = 0, gainSamples = 0;
         bool yawValid = false, yaw0Valid = false, yawHoldOff = false;
         int lastYaw = 0, yaw0 = 0;
+        double yawRef = 0;                           // heading being held (telemetry degrees, clockwise positive)
+        std::deque<std::pair<double, int>> yawHist;  // recent telemetry headings: the picture is older than the newest one
         double altBoostCm = 0, lastTraceT = -1e9;
         bool finalDescent = false;                   // on the last stretch: flying at the finish height
         int seekRises = 0;

@@ -244,9 +244,9 @@ std::string stateToJson(const StateSnapshot& s) {
         ev += (ev.empty() ? "\"" : ",\"") + esc(s.events[i]) + "\"";
     char simBuf[256] = "";
     if (s.sim) snprintf(simBuf, sizeof(simBuf), ",\"sim\":{\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,\"yaw\":%.1f,\"camPitch\":%.1f}", s.simX, s.simY, s.simZ, s.simYaw, s.camPitch);
-    char courseBuf[160];
-    snprintf(courseBuf, sizeof(courseBuf), ",\"lineColor\":\"%s\",\"course\":%s,\"nextTag\":%d,\"speed\":%.2f", esc(s.lineColor).c_str(),
-             s.course ? "true" : "false", s.nextTag, s.speed);
+    char courseBuf[224];
+    snprintf(courseBuf, sizeof(courseBuf), ",\"lineColor\":\"%s\",\"course\":%s,\"nextTag\":%d,\"speed\":%.2f,\"heading\":\"%s\"", esc(s.lineColor).c_str(),
+             s.course ? "true" : "false", s.nextTag, s.speed, esc(s.heading).c_str());
     char buf[2816];
     snprintf(buf, sizeof(buf),
              "{\"phase\":\"%s\",\"seg\":%d,\"t\":%.1f,\"telemetry\":%s,\"bat\":%d,\"tof\":%d,\"h\":%d,\"yaw\":%d,\"pitch\":%d,"

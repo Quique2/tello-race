@@ -26,6 +26,22 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-10-12 afternoon (laptop) first real course flights; nose-follows-path mode with a switch; fixes from the flight log
+* The user flew five missions from the page (nose fixed). Fifth one complete: tags 1-2-3-4, landed on tag 4,
+  28.7 s. The other four and what was changed are listed in docs/COURSE_TEC.md ("The first real flights"): range
+  limit false alarms (now 6 m), a piece of the arrival tape taken for the next tape (next tape must run away from
+  the tag), drifting while waiting over a tag (holds on the seen tag), mirror measurement repeated (once per run),
+  camera point vs drone centre (`course.camera_ahead_m = 0.06`).
+* New: `course.heading = fixed | path`. `path` turns the nose along the route (yaw reference kept as a telemetry
+  heading, stick direction corrected for the turn since the picture). Page buttons NOSE FIXED / NOSE FOLLOWS PATH
+  (web command `heading`, refused while the mission flies), state JSON `heading`, video label. Simulator: both
+  modes 20/20; path mode about 1.5 s slower.
+* `config/learned_course_tec.ini` exists on the Pi since those flights (mirror 92.8 / 2.4, signs verified):
+  flights after a restart of the station skip the measurement at tag 1.
+* Pi side: nothing to do beyond the usual pull + rebuild (done from the laptop over the cable when this was
+  written). The `slow loop` warning fires all the time on the ground because of `mission.idle_fps`: harmless,
+  to be silenced.
+
 ### 2026-10-12 (laptop) course mode deployed to the Pi over the cable; ready for the first real flight
 * Pi at cf9fd6a+, rebuilt, `~/.config/drone-watch.env` now starts the station with
   `--profile config/course_tec.ini --log-level debug --set tello.wifi_ifname=wlan1 --set camera.flip=vertical`.

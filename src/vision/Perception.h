@@ -79,7 +79,7 @@ public:
     bool pitchSignKnown() const { return pitchSignKnown_; }
     bool rollSignKnown() const { return rollSignKnown_; }
     bool imuSignsVerified() const { return imuVerified_ || (pitchSignKnown_ && rollSignKnown_); }
-    bool mountTrusted() const { return mountVerified_ || (calib_.applied && calib_.samples >= 40 && calibStable_ >= 2); }
+    bool mountTrusted() const { return mountVerified_ || mountSettled_; }
     // Manual calibration hook (calib-ground tool): feed a pose and get the estimate
     void setAutoCalib(bool on) { autoCalib_ = on; }
     // Belly camera mode: tags are detected (no pose), the line/floor overlay is skipped (camera looks straight down)
@@ -119,6 +119,7 @@ private:
     bool pitchSignKnown_ = false, rollSignKnown_ = false;
     bool mountVerified_ = true;              // ground.mount_verified: camera.pitch_deg / roll_deg are measured values
     int calibStable_ = 0;                    // solves in a row that changed the angles by less than 0.3 deg
+    bool mountSettled_ = false;              // the fit has settled once in this run (later refinements do not undo that)
     bool shiftPending_ = false;
     cv::Point2d pendingShift_{0, 0};
     GroundProjector proj_;
