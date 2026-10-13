@@ -82,6 +82,9 @@ public:
     bool mountTrusted() const { return mountVerified_ || mountSettled_; }
     // Manual calibration hook (calib-ground tool): feed a pose and get the estimate
     void setAutoCalib(bool on) { autoCalib_ = on; }
+    // The camera angle given from outside, at the moment the floor fit would have found it (the replay of a recorded
+    // flight keeps to the angle that flight had in force): what the navigator remembers moves with it, as after a fit.
+    void setMount(double pitchDeg, double rollDeg);
     // Belly camera mode: tags are detected (no pose), the line/floor overlay is skipped (camera looks straight down)
     void setDownwardCamera(bool on) { downward_ = on; resetTracking(); }
     bool downwardCamera() const { return downward_; }

@@ -287,6 +287,7 @@ int MissionLoop::run() {
         perception_.setLineHint(haveHint, hx, hy);
         if (got) {
             double tp = wall.now();
+            if (rec) rec->aim(perception_);
             obs = perception_.process(frame.image, st, frame.stamp, frame.seq);
             if (rec) rec->observed(obs);
             const double pm = (wall.now() - tp) * 1000;
@@ -681,7 +682,9 @@ void MissionLoop::startRecording() {
         LOG_WARN("cannot open video writer %s.avi", recBase_.c_str());
     }
     csv_.open(recBase_ + ".csv");
-    csv_ << "t,seq,phase,bat,tof,h,yaw,pitch,roll,line_valid,line_mode,near_y,heading,curvature,end_visible,tag_id,tag_x,tag_y,rc_lr,rc_fb,rc_ud,rc_yaw\n";
+    // the last two columns are for replaying the recording (sim/FlightReplay): when the telemetry of the row came in,
+    // and how many pieces of tape were traced in its frame
+    csv_ << "t,seq,phase,bat,tof,h,yaw,pitch,roll,line_valid,line_mode,near_y,heading,curvature,end_visible,tag_id,tag_x,tag_y,rc_lr,rc_fb,rc_ud,rc_yaw,st_t,paths\n";
     logx::setFile(recBase_ + ".log");
     recording_ = true;
     LOG_INFO("recording to %s.{avi,csv,log}", recBase_.c_str());
@@ -706,7 +709,8 @@ void MissionLoop::record(const cv::Mat& frame, const Observation& obs, const Tel
     csv_ << obs.stamp << "," << obs.seq << "," << nav_.phaseName() << "," << st.bat << "," << st.tof << "," << st.h << "," << st.yaw << ","
          << st.pitch << "," << st.roll << "," << (obs.line.valid ? 1 : 0) << "," << obs.line.mode << "," << obs.line.nearY << ","
          << obs.line.headingDeg << "," << obs.line.curvature << "," << (obs.line.endVisible ? 1 : 0) << "," << (tg ? tg->id : -1) << ","
-         << (tg ? tg->X : 0) << "," << (tg ? tg->Y : 0) << "," << rc.lr << "," << rc.fb << "," << rc.ud << "," << rc.yaw << "\n";
+         << (tg ? tg->X : 0) << "," << (tg ? tg->Y : 0) << "," << rc.lr << "," << rc.fb << "," << rc.ud << "," << rc.yaw << ","
+         << std::to_string(st.stamp) << "," << obs.paths.size() << "\n";
 }
 
 }  // namespace
@@ -773,12 +777,13 @@ int runReplay(const Config& cfg, const MissionOptions& opt) {
     FlightReplay rec(c, o.source.substr(5), o.telemetry, o.realtime);
     std::string err;
     if (!rec.start(&err)) { LOG_ERROR("%s", err.c_str()); return 1; }
+    rec.applyTo(c);               // the camera angle the flight took off with
     WebServer web;
     MissionLoop loop(rec, rec, rec, c, o, nullptr, &web);
     int rc = loop.run();
     web.stop();
     rec.stop();
-    return rc;
+    return rc ? rc : rec.complete() ? 0 : 1;
 }
 
 int runSim(const Config& cfg, const MissionOptions& opt) {
