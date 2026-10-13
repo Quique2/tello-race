@@ -691,6 +691,16 @@ void Perception::solvePlane() {
     }
 }
 
+void Perception::setMount(double pitchDeg, double rollDeg) {
+    double u = 0, v = 0, X = 0, Y = 0;
+    const bool had = proj_.groundToPixel(0.0, 0.0, u, v);
+    proj_.setCameraMount(pitchDeg, rollDeg);
+    if (had && proj_.pixelToGroundAny(u, v, X, Y) && std::hypot(X, Y) > 0.004) {
+        pendingShift_ += cv::Point2d(X, Y);
+        shiftPending_ = true;
+    }
+}
+
 void Perception::drawDebug(cv::Mat& frame, const Observation& obs) const {
     if (downward_) {
         for (const auto& t : obs.tags) {

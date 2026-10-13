@@ -27,7 +27,9 @@ static void usage() {
         "  --source <spec>        udp (default) | file:<video> | camera:<index>\n"
         "  --telemetry <csv>      replay: the .csv recorded with that video; the flight is then replayed as it was flown\n"
         "                         (its frames, telemetry and timing; give the settings it started with via --set;\n"
-        "                         --set replay.jpeg_quality=90 plays the frames through one more JPEG generation)\n"
+        "                         the camera angle is read off the recording, --set replay.follow_camera=0 takes the\n"
+        "                         configured one; --set replay.jpeg_shift=5 plays the frames through one more JPEG\n"
+        "                         generation on a block grid moved by 5 px: see tools/replay_check.py)\n"
         "  --dry-run              fly: connect for video/telemetry but never send flight commands\n"
         "  --start-at-tag <1-3>   resume from a checkpoint: the drone stands on that tag\n"
         "  --auto-start           take off immediately (sim default)\n"
@@ -117,7 +119,7 @@ int main(int argc, char** argv) {
         for (auto& o : opt.overrides)
             if (!probe.setFromArg(o, &err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
         std::string learned = probe.getString("ground.learned_file", "");
-        if (!opt.telemetry.empty()) learned.clear();   // a recorded flight is replayed with what IT started with (--set), not with what is known today
+        if (cmd == "replay" && !opt.telemetry.empty()) learned.clear();   // a recorded flight is replayed with what IT started with (--set), not with what is known today
         const bool use = !learned.empty() && (cmd != "sim" || probe.getBool("sim.use_learned", false));
         if (use) {
             if (learned.find_first_of("/\\") == std::string::npos) {     // a bare name lives next to the main configuration file
