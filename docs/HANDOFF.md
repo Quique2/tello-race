@@ -26,17 +26,6 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
-### 2026-10-12 night (laptop) second recorded flight (nose on the path, rebuilt controller); yaw measured; steering retuned
-* Flown on request, started from the laptop with RECORD on: 4/4 tags, last tag after 21.1 s (38.3 s in the first
-  recording), landed after 27.4 s, clean log. Recording on the Pi: `logs/run_20261012_183452.*`.
-* Yaw of the real drone: 0.65 deg/s per stick unit. With the limit of 40 the nose was more than 45 deg off the
-  direction of travel for 41 % of the flight. Now: full yaw stick, the nose takes the route's direction a little
-  ahead, the drone slows while the nose lags (`heading_*`, `max_yaw_rc`, `k_yaw_hold` in the profile; `sim.rc_yaw_rate`).
-* Path mode: remembered points are turned about the drone's centre by the heading change between pictures; the
-  arrival tape is recognised by the tape's own direction into the tag; a tape that leads back to flown tags both
-  ways is given up. Simulator: both nose modes 30/30, later and first flights.
-* Pi: pulled and rebuilt from the laptop. Not flown yet with these settings.
-
 ### 2026-10-12 evening (laptop) a recorded real flight; controller rebuilt around the measured response; glare
 * The user asked for a live run: started from the laptop with RECORD on (he was next to the drone). 4/4 tags, 38 s,
   with overshoots and a wobble. Recording on the Pi: `logs/run_20261012_140921.{avi,csv,log}`.
