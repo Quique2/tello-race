@@ -153,14 +153,14 @@ for r in recordings:
     parsed.append((base.replace("\\", "/"), rest.split()))
 jobs_list = [(base, sets, q) for base, sets in parsed for q in [0] + jpeg]
 with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
-    outs = dict(zip(((j[0], j[2]) for j in jobs_list), ex.map(replay, jobs_list)))
+    outs = list(ex.map(replay, jobs_list))       # in the order of jobs_list: one recording may be given twice, with other settings
 
 bad = 0
-for base, sets in parsed:
+for k, (base, sets) in enumerate(parsed):
     rec = events(open(base + ".log", errors="replace").read())
-    results = []      # per replay: (label, ok, what)
-    for q in [0] + jpeg:
-        out = outs[(base, q)]
+    results = []      # per replay: (label, same or clean, what was found, its NAV lines, its output)
+    for m, q in enumerate([0] + jpeg):
+        out = outs[k * (1 + len(jpeg)) + m]
         rpl = events(out)
         label = "jpeg %d" % q if q else "as recorded"
         if not any(e[1] == "phase" for e in rpl):
