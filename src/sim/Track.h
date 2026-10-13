@@ -8,7 +8,11 @@
 #include "vision/TagDetector.h"
 
 // World frame: X east, Y north (meters), heading yaw in degrees counter-clockwise from +X.
-struct TrackTag { int id = 0; double x = 0, y = 0, yawDeg = 0; };
+struct TrackTag {
+    int id = 0; double x = 0, y = 0, yawDeg = 0;
+    bool moved = false;                     // the sheet lies elsewhere than in the photo of the course (sim.tag_offsets) ...
+    double photoX = 0, photoY = 0;          // ... which shows it here
+};
 struct TrackSegment { std::vector<cv::Point2d> pts; };
 
 struct Track {
@@ -26,6 +30,7 @@ struct Track {
     double pxPerM = 0;                      // > 0: resolution of worldImage
     bool tagsInImage = false;               // the floor image already shows the real tags: draw none
     double tagPaperW = 0, tagPaperH = 0;    // sheet a drawn tag sits on (m); 0 = letter size
+    std::vector<cv::Point2d> tarp;          // outline of the white tarp in the photo (empty: not known)
     // full route in course order (segments joined by straight links): reference for the path-tracking error
     std::vector<cv::Point2d> route() const;
 };
@@ -37,6 +42,8 @@ struct TrackStyle {
     cv::Scalar lineColor{25, 25, 25};
     cv::Scalar carpet{118, 108, 100};
     uint64_t textureSeed = 1;
+    cv::Scalar tagBlack{0, 0, 0};           // the black of a drawn tag (the real camera shows a dark blue-grey)
+    double floorGain = 1.0;                 // brightness of the photographed floor outside the tarp (the real camera shows it far darker)
 };
 
 class TrackBuilder {
@@ -48,4 +55,6 @@ public:
     static cv::Mat render(const Track& t, const TrackStyle& s, const TagDetector& tags);
     static cv::Mat renderTags(cv::Mat img, const Track& t, const TrackStyle& s, const TagDetector& tags);
     static cv::Point2d worldToPx(const Track& t, double pxPerM, const cv::Point2d& p);
+    // a tag's sheet is loose: put it somewhere else than the course file has it (the segment it ends is cut or extended to it)
+    static void moveTag(Track& t, int id, double dx, double dy);
 };

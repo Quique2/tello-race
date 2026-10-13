@@ -32,6 +32,8 @@ struct SimParams {
     double idleLimitS = 60, maxTimeS = 300;
     double tracePoseS = 0;   // >0: log the true pose every N s of sim time (debug)
     double exposureS = 0;    // >0: motion blur from the real image motion during the exposure (replaces blurPerMs)
+    int exposureSamples = 1; // >1: the picture is the mean of up to this many views along the way flown and turned during the
+                             // exposure, so a turning nose smears the picture round the drone (1: one straight smear for all of it)
     double startJitterM = 0, startYawJitterDeg = 0;   // placement error of the drone at the start (sigma)
     double startYawOffsetDeg = 0;                     // the drone is put down turned by this much (180 = facing backwards)
     double rcVelLat = 0;     // m/s per rc unit sideways (0 = same as forward)
@@ -44,6 +46,19 @@ struct SimParams {
     double rcDelayS = 0;     // a stick command starts to act this long after it was sent (measured on the real drone: 0.3 s)
     bool inertial = false;   // true: while the nose turns, the drone keeps moving the way it was going over the floor
                              // (as a real one does) and only comes round with its response time
+    // What the real camera shows and a clean rendering does not (all off unless set; see docs/COURSE_TEC.md).
+    std::vector<double> glareLamps;   // x, y, height (m) of every lamp whose reflection on the glossy tape washes it pale
+    double glareSigmaM = 0.11;        // size of the washed patch on the floor
+    double glareStrength = 0.7;       // how far the tape goes towards white in the middle of the patch (0 - 1)
+    double chromaBlurPx = 0;          // the camera gives colour more coarsely than brightness: a colour edge is this much softer (sigma, pixels)
+    double blockNoiseSigma = 0;       // colour error of whole 8x8 pixel blocks, as video compression leaves it (BGR levels)
+    double tintSigma = 0;             // colour error that stays on the floor from frame to frame (blue against green, levels) ...
+    double tintPatchM = 0.012;        // ... in patches of this size
+    double tintWideSigma = 0;         // ... and from one end of the course to the other (the light is not the same colour everywhere)
+    double tintDriftSigma = 0;        // ... and of the whole picture, wandering slowly (the camera's white balance)
+    double mirrorEdgePx = 0;          // > 0: the lower edge of the mirror, out of focus, darkens this many rows at the bottom
+    double mirrorEdgeTiltPx = 0;      // ... and reaches this much higher at the right border than at the left
+    cv::Scalar mirrorEdgeColor{81, 85, 100};
     void load(const Config& cfg);
 };
 
@@ -136,4 +151,15 @@ private:
     Result res_;
     int nextTag_ = 0;
     cv::Mat mapX_, mapY_;
+    cv::Mat bodyX_, bodyY_;           // floor point of every pixel as seen from the camera, drone axes (sim.exposure_samples)
+    cv::Mat renderExposure(int n);
+    cv::Mat glare_;                   // per pixel: how much of a lamp's reflection lies there (sim.glare_lamps)
+    double floorWhite_ = 255;         // brightness of the white surface of the rendered floor: what a reflection washes towards
+    void applyGlare(cv::Mat& img) const;
+    void applyMirrorEdge(cv::Mat& img) const;
+    void applyChromaBlur(cv::Mat& img) const;
+    void addBlockNoise(cv::Mat& f);
+    cv::Mat blockNoise_;              // the block errors of the last picture: most of each is still there in the next
+    double tintDrift_ = 0;            // where the picture's blue against green stands at the moment (sim.tint_drift_sigma)
+    void tintWorld();
 };
