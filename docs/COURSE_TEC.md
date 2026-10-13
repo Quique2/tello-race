@@ -223,16 +223,29 @@ not been tried on the real drone; keep the resolution `high` (the vision expects
 
 | | fixed | follows the path |
 |---|---|---|
-| simulator with the real drone's response, later flights (20 each) | 20 / 20, 26.6 s, 3.1 cm | 20 / 20, 27.6 s, 3.7 cm |
-| the same, first flight (20 each) | 20 / 20, 34.3 s | 20 / 20, 34.5 s |
+| real drone, one recorded flight each (2026-10-12) | old controller: 38.3 s to the last tag | new controller: 21.1 s to the last tag, 27.4 s landed |
+| simulator with the real drone's response, later flights (30 each) | 30 / 30, 26.6 s, 3.1 cm | 30 / 30, 31.7 s, 3.9 cm |
+| the same, first flight (30 each) | 30 / 30, 34.4 s | 30 / 30, 39.1 s |
+| nose within 15 deg of the direction of travel (simulator) | (not meant to be) | 60 % of the flight; more than 45 deg off: 12 % |
 
 With the nose fixed the camera's long side (it sees further behind than ahead) looks along whatever direction the
 drone happens to travel in; with the nose on the path the short side always looks ahead, so every tag comes into
-view late and is approached slowly, and at a tag the drone may turn on the spot to find the next tape. That is
-where the extra second goes. `course.heading_look_m` (how far ahead the nose aims) and `course.max_yaw_rc` (how
-fast it turns, 40) shape how it looks. A drone keeps going the way it was moving while its nose swings round, so the
-navigator's motion model lives in a frame that does not turn, and the stick direction is worked out for the heading
-the nose will have when the command acts.
+view late and is approached slowly.
+
+How the nose is steered (`[course]` in the profile):
+
+* it takes the direction the route HAS a little ahead (`heading_tangent`, `heading_look_m = 0.15` plus
+  `heading_look_s = 0.7` seconds of travel): it starts to turn before the corner, and while crossing the gap after a
+  tag it already points along the next tape;
+* the real drone turns 0.65 deg/s per yaw stick unit (measured), so the limit is the full stick (`max_yaw_rc = 100`,
+  65 deg/s) and the gain is `k_yaw_hold = 2.5`;
+* while the nose is more than `heading_slow_deg = 25` from where it should point, the drone flies slower (down to
+  `heading_slow_min = 0.45` of the speed). That costs 4 s per course and halves the share flown sideways. Set
+  `heading_slow_deg = 0` for the faster, looser version (27.9 s, 18 % of the flight more than 45 deg off);
+* a drone keeps going the way it was moving while its nose swings round, and the camera swings round the drone's
+  centre on a 6 cm arm: the navigator's motion model lives in a frame that does not turn, the stick direction is
+  worked out for the heading the nose will have when the command acts, and remembered points are turned about the
+  drone's centre by the heading change between the two pictures.
 
 `course.camera_ahead_m = 0.06`: the mirror looks down from 6 cm ahead of the drone's centre. It is the centre that
 is kept on the tape and over the tags, in both modes.
@@ -303,12 +316,34 @@ tarp's 95th percentile was 25. The dark floor beyond the tarp stays out of the m
 **After a tag with no next tape in sight** the drone now returns over the tag first and only then rises for a wider
 view (the next tape starts next to the tag).
 
+## The second recorded flight: nose on the path (2026-10-12)
+
+`logs/run_20261012_183452.*` on the Pi. Nose-follows-path with the controller rebuilt after the first recording:
+tags 1-2-3-4, the last one after 21.1 s (38.3 s in the first recording), landed after 27.4 s, no warning in the log.
+Tag 1 was passed 2 cm from its centre. The gap after tag 1 took 1.8 s (5.7 s in the first recording, where the
+reflection hid the start of the tape). Sideways error as the navigator saw it: 2.2 cm mean, 11 cm at worst (first
+recording: 5.7 and 33).
+
+What it showed:
+
+* the nose lagged: within 15 deg of the direction of travel for 34 % of the flight, more than 45 deg off for 41 %.
+  The yaw answers 0.65 deg/s per stick unit and the limit was 40 units. With that yaw rate the simulator gives the
+  same picture (26 % and 43 %), so the simulator's yaw is now set to it and the steering above was tuned there;
+* the fit of the response on this flight is poorer than on the first one (5 cm against 1 - 3 cm) and puts the gain
+  at 0.016 and the dead time at 0.67 s with a shorter time constant: about the same total lag (1.1 - 1.3 s), split
+  differently. The values of the first recording were kept;
+* in the simulator, one flight in twenty of this mode picked the tape it had arrived on as the next one at tag 3 (a
+  corner just before the tag is cut, so the direction flown says little about which tape the drone came on). The
+  tape's own direction into the tag is used now, and a tape that turns out to lead back to flown tags both ways is
+  given up for the last tag. 30 of 30 since, in both nose modes.
+
 ## Not verified on the real drone yet
 
-* everything in "The recorded flight" above: the new controller, the paler tape limit and the return over the tag
-  have flown in the simulator only;
-* the nose-follows-path mode has only flown in the simulator, and how the real drone's yaw answers is not measured
-  (record a flight in that mode: the same fit will tell).
+* the nose-follows-path steering as it is now (full yaw stick, turning ahead of corners, slowing while the nose
+  lags) has flown in the simulator only; the flight above used the gentler settings;
+* nose-fixed with the rebuilt controller has not flown at all on the real drone (the path-mode flight used the same
+  controller underneath);
+* whether small sticks do less than their share (see the first recording).
 
 To record a flight: press RECORD on the page before START (video, telemetry table and log go to `logs/` on the Pi).
 

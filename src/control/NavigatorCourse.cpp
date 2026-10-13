@@ -38,6 +38,10 @@ void CourseParams::load(const Config& c) {
     headingFollow = toLower(c.getString("course.heading", headingFollow ? "path" : "fixed")) == "path";
     headingLookM = c.getDouble("course.heading_look_m", headingLookM);
     maxYawRc = c.getDouble("course.max_yaw_rc", maxYawRc);
+    headingLookS = c.getDouble("course.heading_look_s", headingLookS);
+    headingTangent = c.getBool("course.heading_tangent", headingTangent);
+    headingSlowDeg = c.getDouble("course.heading_slow_deg", headingSlowDeg);
+    headingSlowMin = c.getDouble("course.heading_slow_min", headingSlowMin);
     camAheadM = c.getDouble("course.camera_ahead_m", camAheadM);
     maxRangeM = c.getDouble("course.max_range_m", maxRangeM);
     biasMax = c.getDouble("course.bias_max_ms", biasMax);
@@ -245,7 +249,7 @@ void Navigator::courseCommand(const cv::Point2d& vel, const TelloState& st) {
     while (c.cmdHist.size() > 2 && c.cmdHist.front().first < now_ - cp_.cmdDelayS - 1.0) c.cmdHist.pop_front();
 }
 
-void Navigator::courseTagReached(int id, const cv::Point2d& pos, const Observation& obs, int activeLine) {
+void Navigator::courseTagReached(int id, const cv::Point2d& pos, const Observation& obs, int activeLine, const cv::Point2d* inDir) {
     CourseState& c = cs_;
     const int expected = nextTagId();
     visited_.insert(id);
@@ -262,8 +266,11 @@ void Navigator::courseTagReached(int id, const cv::Point2d& pos, const Observati
     if (events.size() > 12) events.erase(events.begin());
     c.anchor = pos;
     c.anchorTag = id;
+    c.backtracks = 0;
     c.goalTag = -1;
-    c.arrivalDir = c.travelDir;
+    // the way the tape runs into the tag when that is known: a corner just before the tag is cut, and the direction
+    // flown at that moment says little about which tape end belongs to the tape the drone came on
+    c.arrivalDir = inDir && norm(*inDir) > 0.5 ? *inDir : c.travelDir;
     c.endSince = -1;
     if (id == cp_.finishId || c.k >= (int)cp_.order.size()) {
         c.stage = CourseState::Finish;
@@ -400,6 +407,14 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
         pd += c.vPred * h;
         c.vPred += (turn(sentAt(now_ + s - cp_.cmdDelayS), -psi(now_ + s)) - c.vPred) * std::min(1.0, h / tauR);
     }
+    // What is remembered from earlier pictures turns by as much as the nose turned between the two pictures (not
+    // between the two newest telemetry packets: the picture is older, and the turn rate changes quickly).
+    if (turning) {
+        const double pI = psi(tImg);
+        dyaw = c.psiImgValid ? mu::wrapDeg(pI - c.lastPsiImg) : 0.0;
+        c.lastPsiImg = pI;
+        c.psiImgValid = true;
+    }
     // ... all of it as seen in the picture being used
     pd = turn(pd, psi(tImg));
     vThen = turn(vThen, psi(tImg));
@@ -409,7 +424,10 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
     pd.x -= cp_.camAheadM;
     const double ca = std::cos(mu::deg2rad(dyaw)), sa = std::sin(mu::deg2rad(dyaw));
     auto rot = [&](const cv::Point2d& p) { return cv::Point2d(p.x * ca - p.y * sa, p.x * sa + p.y * ca); };
-    auto move = [&](const cv::Point2d& p) { return rot(p - vThen * dt); };   // floor point: previous image frame -> this one
+    // floor point: previous image frame -> this one. The drone turns about its own centre, and everything seen is
+    // measured from the point under the camera, which swings round that centre on an arm of camAheadM.
+    const cv::Point2d arm(turning ? cp_.camAheadM : 0.0, 0.0);
+    auto move = [&](const cv::Point2d& p) { return rot(p + arm - vThen * dt) - arm; };
     for (auto& t : c.tags) { t.p = move(t.p); t.fresh = false; }
     if (c.havePrev) { c.prevTarget = move(c.prevTarget); c.prevBehind = move(c.prevBehind); }
     if (c.haveStart) c.startPos = move(c.startPos);
@@ -722,6 +740,22 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
                               t.id, (int)visited_.count(t.id), now_ - t.seen, t.p.x, t.p.y, endFar.x, endFar.y, norm(t.p - endFar), endNear.x, endNear.y,
                               norm(t.p - endNear), polys[li].length(), sPrev, fwd ? 1 : 0, pd.x, pd.y);
                 fwd = !fwd;
+                ++c.backtracks;
+            }
+            if (c.anchorTag >= 0 && (c.backtracks >= 2 || (farVisited && nearVisited && !farCut))) {
+                // Both ways along this tape lead to tags already flown over: it is a tape flown before, picked up by
+                // mistake after the last tag. Back to that tag, and look for the next tape from there.
+                LOG_WARN("NAV this tape was flown before: going back to tag ID%d to find the next one", c.anchorTag);
+                for (const auto& t : c.tags) if (t.id == c.anchorTag && now_ - t.seen < 2.5) c.anchor = t.p;
+                c.backtracks = 0;
+                c.stage = CourseState::SeekNext;
+                c.stageStart = now_;
+                c.seekRises = 0; c.seekOverT = 0;
+                c.haveStart = false;
+                c.havePrev = false;
+                setPhase(Phase::Search, "on a tape flown before: back to the tag");
+                courseCommand(cv::Point2d(0, 0), st);
+                return;
             }
             pl = polys[li];
             if (!fwd) { pl.reverse(); sPrev = pl.length() - sPrev; }
@@ -857,7 +891,7 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
         const double dTag = norm(rel);
         if (dTag < cp_.tagCaptureM || (dTag < 0.15 && rel.dot(tagInDir) > -0.015) || (wps.front().idx == 0 && dTag < 0.20)) {
             const cv::Point2d keep = c.vCmd;
-            courseTagReached(endTag->id, endTag->p, obs, li);
+            courseTagReached(endTag->id, endTag->p, obs, li, &tagInDir);
             if (!finished()) courseCommand(keep * 0.8, st);
             return;
         }
@@ -913,6 +947,11 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
     c.finalDescent = cp_.finishAltCm > 0 && !wps.empty() && wps.front().type == WpTag && lastTag(wps.front().tagId) &&
                      route.cum[std::min((size_t)wps.front().idx, route.cum.size() - 1)] < cp_.finishDescentM;
     if (h > 0 && !c.finalDescent && std::fabs(p_.altitudeCm + c.altBoostCm - h) > 25) v = std::min(v, cp_.vClimb);
+    if (cp_.headingFollow && st.valid && cp_.headingSlowDeg > 0) {
+        // the nose turns more slowly than the path does at a sharp corner: give it time to come round
+        const double off = std::fabs(mu::wrapDeg(c.yawRef - st.yaw));
+        if (off > cp_.headingSlowDeg) v *= std::max(cp_.headingSlowMin, 1.0 - (off - cp_.headingSlowDeg) / 60.0);
+    }
     v = std::min(std::max(v, cp_.vMin), vStop);
 
     // ---- LINE 5: direction. Along the route towards a point a little ahead of the drone (far enough to turn in
@@ -936,7 +975,10 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
     if (cp_.headingFollow && st.valid && route.length() > 0.08) {
         // The nose aims along the route, a little further ahead than the preview point (a steadier direction). The
         // heading wanted is kept as a telemetry heading, so the turn itself is closed on the drone's own compass.
-        const cv::Point2d hd = unit(route.at(std::min(sLook + cp_.headingLookM, route.length())) - p0);
+        const double sH = std::min(sLook + cp_.headingLookM + cp_.headingLookS * speedNow, route.length());
+        const cv::Point2d hd = cp_.headingTangent
+            ? unit(route.at(std::min(sH + 0.04, route.length())) - route.at(std::max(sH - 0.04, 0.0)))
+            : unit(route.at(sH) - p0);
         if (norm(hd) > 0.5) {
             const double want = mu::wrapDeg(yawAt(c.yawHist, tImg, st.yaw) - mu::rad2deg(std::atan2(hd.y, hd.x)));
             c.yawRef = mu::wrapDeg(c.yawRef + 0.35 * mu::wrapDeg(want - c.yawRef));

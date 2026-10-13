@@ -67,6 +67,12 @@ struct CourseParams {
     bool headingFollow = false;
     double headingLookM = 0.25;           // the nose aims at the route this far beyond the preview point
     double maxYawRc = 60;                 // yaw stick limit while turning with the path
+    double headingLookS = 0;              // ... plus this many seconds of travel (the nose needs time to come round)
+    bool headingTangent = false;          // true: the nose takes the direction the route HAS at that point (it turns before
+                                          // the corner, and across a gap it already points along the next tape);
+                                          // false: it points at that point
+    double headingSlowDeg = 0;            // > 0: fly slower while the nose is further than this from where it should point
+    double headingSlowMin = 0.35;         // ... down to this share of the speed, 60 degrees further off
     double camAheadM = 0.06;              // the camera looks down from the mirror, this far ahead of the drone's centre
     double maxRangeM = 0;                 // > 0: land when the drone seems to be further than this from where it took off
     double accel = 0.7, latAccel = 0.5;                                      // m/s^2: braking and cornering limits
@@ -145,7 +151,7 @@ private:
     void courseTakeoff(const TelloState& st);
     void courseFly(const Observation& obs, const TelloState& st);
     void courseCommand(const cv::Point2d& vel, const TelloState& st);
-    void courseTagReached(int id, const cv::Point2d& pos, const Observation& obs, int activeLine);
+    void courseTagReached(int id, const cv::Point2d& pos, const Observation& obs, int activeLine, const cv::Point2d* inDir = nullptr);
     bool courseChooseNext(const Observation& obs, int excludeLine);
     bool courseFindNext(const Observation& obs, int excludeLine, const cv::Point2d& anchor, const cv::Point2d& arrivalDir,
                         int& line, int& end, double& dist) const;
@@ -198,6 +204,8 @@ private:
         cv::Point2d vPred;                           // modelled velocity when a command sent now starts to act
         cv::Point2d vW;                              // the modelled velocity in a frame that does not turn with the nose
         double yawRate = 0;                          // deg/s, how fast the nose is turning (telemetry)
+        double lastPsiImg = 0;                       // heading at the time of the previous picture
+        bool psiImgValid = false;
         std::deque<std::pair<double, cv::Point2d>> cmdHist;   // what was sent and when: it acts cmdDelayS later
         std::deque<std::pair<double, cv::Point2d>> vHist;
         double gain = 0.015;
@@ -210,6 +218,7 @@ private:
         bool finalDescent = false;                   // on the last stretch: flying at the finish height
         int seekRises = 0;
         double seekOverT = 0;                        // time spent over the tag while looking for the next tape
+        int backtracks = 0;                          // times the tape being followed turned out to lead back to a flown tag
     } cs_;
     Phase phase_ = Phase::Idle;
     double phaseStart_ = 0, missionStart_ = 0, lastStep_ = 0, now_ = 0, prevStep_ = 0, blindUntil_ = -1e9;
