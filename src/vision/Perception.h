@@ -85,6 +85,9 @@ public:
     // The camera angle given from outside, at the moment the floor fit would have found it (the replay of a recorded
     // flight keeps to the angle that flight had in force): what the navigator remembers moves with it, as after a fit.
     void setMount(double pitchDeg, double rollDeg);
+    // ... and the factor the height sensor is scaled with (ground.height_from_tags), where the fit would have set it
+    void setHeightScale(double scale) { heightScale_ = scale; }
+    double heightScale() const { return heightScale_; }
     // Belly camera mode: tags are detected (no pose), the line/floor overlay is skipped (camera looks straight down)
     void setDownwardCamera(bool on) { downward_ = on; resetTracking(); }
     bool downwardCamera() const { return downward_; }

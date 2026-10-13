@@ -208,17 +208,24 @@ bool FlightReplay::readFrame(size_t row, cv::Mat& img) {
 // part is nothing while the lean stands still and up to a degree while it changes. The steps are laid through the
 // readings, and what a reading shows beyond its step is kept as the lean correction of that frame: with both, the
 // floor is seen in every frame with a tag exactly as the flight saw it.
+//
+// One thing a single sighting cannot tell from the angle is the factor the height sensor is scaled with (a floor 1 %
+// further away looks like a camera tilted a quarter of a degree more towards a tag 40 cm off). That factor is a
+// property of the tags and the lens, so this pass fits it from the sightings as the flight did, and the replay is
+// given it row by row along with the angle.
 bool FlightReplay::followCamera(std::string* err) {
-    Config c = cfg_;
-    c.set("ground.auto_calib", "0");
     Perception perception;
-    if (!perception.init(c, err)) return false;
+    const logx::Level level = logx::level();
+    logx::setLevel(logx::WARN);                      // what this pass fits for itself is not the replay's
+    const bool ready = perception.init(cfg_, err);
     std::vector<size_t> row;                         // rows with a reading
     std::vector<double> pitch, roll, weight;
     size_t calm = 0;
     cv::Mat img;
-    for (size_t i = first_; i <= last_ && readFrame(i, img); ++i) {
+    scale_.assign(rows_.size(), 1.0);
+    for (size_t i = first_; ready && i <= last_ && readFrame(i, img); ++i) {
         const Row& r = rows_[i];
+        scale_[i] = perception.heightScale();        // the one this frame is seen with: a fit on it shows from the next
         const Observation obs = perception.process(img, r.st, r.t, r.seq);
         const TagObservation* t = i > takeoff_ && r.tagId >= 0 ? obs.tag(r.tagId) : nullptr;
         if (!t) continue;
@@ -248,8 +255,12 @@ bool FlightReplay::followCamera(std::string* err) {
             still = rows_[j].st.pitch == r.st.pitch && rows_[j].st.roll == r.st.roll;
         calm += still;
         row.push_back(i); pitch.push_back(p); roll.push_back(q); weight.push_back(still ? 1.0 : 1.0 / 3.0);
-        LOG_DEBUG("RPL camera t=%.2f seq=%llu pitch=%.2f roll=%.2f%s", r.t - airborneT_, (unsigned long long)r.seq, p, q, still ? "" : " (lean changing)");
     }
+    logx::setLevel(level);
+    if (!ready) return false;
+    for (size_t k = 0; k < row.size(); ++k)
+        LOG_DEBUG("RPL camera t=%.2f seq=%llu pitch=%.2f roll=%.2f height x%.3f%s", rows_[row[k]].t - airborneT_, (unsigned long long)rows_[row[k]].seq,
+                  pitch[k], roll[k], scale_[row[k]], weight[k] == 1.0 ? "" : " (lean changing)");
     cap_.release();
     if (!cap_.open(videoPath_)) { if (err) *err = "replay: cannot open video file " + videoPath_; return false; }
     framesRead_ = 0;
@@ -288,8 +299,8 @@ bool FlightReplay::followCamera(std::string* err) {
     }
     if (mount_.size() > 9) steps += ", ...";
     LOG_INFO("replay: camera angle of the flight, read off the %zu frames in which it saw a tag (%zu of them with the lean standing still): "
-             "pitch %.2f roll %.2f deg at take-off (configured here: %.2f / %.2f)%s", row.size(), calm, mount_[0].pitch, mount_[0].roll,
-             givenPitch_, givenRoll_, steps.c_str());
+             "pitch %.2f roll %.2f deg at take-off (configured here: %.2f / %.2f)%s; height sensor x%.3f at the end", row.size(), calm,
+             mount_[0].pitch, mount_[0].roll, givenPitch_, givenRoll_, steps.c_str(), scale_[last_]);
     return true;
 }
 
@@ -312,6 +323,7 @@ void FlightReplay::aim(Perception& perception) {
         perception.setMount(mount_[mountNext_].pitch, mount_[mountNext_].roll);
     const Mount& m = mount_[mountNext_ - 1];
     g.setCameraMount(m.pitch + leanFix_[cur_].x, m.roll + leanFix_[cur_].y);
+    perception.setHeightScale(scale_[cur_]);
 }
 
 bool FlightReplay::start(std::string* err) {

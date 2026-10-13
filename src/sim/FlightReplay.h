@@ -20,9 +20,13 @@
 //  - The camera angle. A station that had flown before went into the recording with an angle measured in those
 //    flights, and measures it again on the way from sightings a replay never gets. But the csv says where the flight
 //    saw its tags and the video has the same pixels, so the angle the flight had in force is read off every sighting
-//    and the replay is given it, step by step (replay.follow_camera). Off, the angle is the configured one and is
-//    fitted again here from the same sightings, as on a station just started: that is the default for a flight that
-//    began with ground.mount_verified = 0, which measured its mount itself with the manoeuvre around the first tag.
+//    and the replay is given it, step by step (replay.follow_camera). The factor on the height sensor, which a
+//    single sighting cannot tell from the angle, is not read off the flight: it is fitted from the same sightings
+//    before the replay starts, beginning at 1 (in the recordings of 2026-10-12 a station just started got the same
+//    value to 0.4 %, up to 0.9 s after the flight did; the station that had carried 1.006 over was 0.6 % off).
+//    With replay.follow_camera off the angle is the configured one and is fitted again here, as on a station just
+//    started: that is the default for a flight that began with ground.mount_verified = 0, which measured its mount
+//    itself with the manoeuvre around the first tag.
 //  - The pixels. The frames went through the recorder's MJPG before they reached the file, and that leaves its
 //    block grid in them: in the three recordings of 2026-10-12 the two colour channels jump from one 16 px block to
 //    the next by 6 to 30 times the step between neighbours inside a block (the flight's frames had no such grid).
@@ -102,6 +106,7 @@ private:
     std::vector<Row> rows_;
     std::vector<Mount> mount_;                    // the camera angle of the flight over time; [0] is the one it took off with
     std::vector<cv::Point2d> leanFix_;            // per row: what the flight's lean differed by from the one known here (deg: pitch, roll)
+    std::vector<double> scale_;                   // per row: the factor on the height sensor, fitted from the sightings before the replay
     size_t mountNext_ = 1;
     cv::VideoCapture cap_;
     size_t first_ = 0, takeoff_ = 0, last_ = 0;   // rows: first one played, the take-off, the last one of the flight
