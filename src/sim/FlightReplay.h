@@ -83,5 +83,6 @@ private:
     // the tags here against the flight's: frames with both, the sums of the difference (m) and of the height, the rest
     int tagN_ = 0, tagOnlyFlight_ = 0, tagOnlyHere_ = 0;
     double tagSum_[2] = {0, 0}, tagSq_ = 0, tagHeight_ = 0;
+    double tagFirst_[3] = {0, 0, 0};              // the first of them: the difference and the height
     double lastWall_ = 0, lastRowT_ = 0;
 };

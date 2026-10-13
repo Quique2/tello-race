@@ -195,7 +195,7 @@ void FlightReplay::observed(const Observation& obs) {
     if (r.tagId < 0 && !obs.tags.empty()) ++tagOnlyHere_;
     if (!t) return;
     const double dx = t->X - r.tagX, dy = t->Y - r.tagY;
-    ++tagN_;
+    if (++tagN_ == 1) { tagFirst_[0] = dx; tagFirst_[1] = dy; tagFirst_[2] = obs.heightM; }
     tagSum_[0] += dx; tagSum_[1] += dy;
     tagSq_ += dx * dx + dy * dy;
     tagHeight_ += obs.heightM;
@@ -217,11 +217,15 @@ void FlightReplay::finish(const char* why) {
     LOG_INFO("replay: tags against where the flight saw them, on %d frames: mean (%+.3f, %+.3f) m, rms %.3f m; seen only in the flight on %d, only here on %d",
              tagN_, mx, my, std::sqrt(tagSq_ / m), tagOnlyFlight_, tagOnlyHere_);
     // 2 cm at flying height is a degree of camera angle: more than the frame-to-frame scatter of the tag centre.
-    // A point of the floor moves back as the camera is tilted further down and left as it is rolled.
-    if (tagN_ >= 5 && std::hypot(mx, my) > 0.02 && h > 0.2)
+    // A point of the floor moves back as the camera is tilted further down and left as it is rolled. The first
+    // sighting shows the angle the flight took off with: nothing had been measured in it yet.
+    const double far = std::max(std::hypot(mx, my), std::hypot(tagFirst_[0], tagFirst_[1]));
+    if (tagN_ >= 5 && far > 0.02 && h > 0.2 && tagFirst_[2] > 0.2)
         LOG_WARN("replay: the tags lie %.0f cm from where the flight saw them: it flew with another camera angle than the one given "
-                 "(on average about camera.pitch_deg=%.1f camera.roll_deg=%.1f; a station that has flown before measures it again in flight)",
-                 100 * std::hypot(mx, my), givenPitch_ + mu::rad2deg(std::atan2(mx, h)), givenRoll_ - mu::rad2deg(std::atan2(my, h)));
+                 "(about camera.pitch_deg=%.1f camera.roll_deg=%.1f at its first sighting, %.1f / %.1f on average: a station that has "
+                 "flown before starts with the angle of its last flight and measures it again on the way)",
+                 100 * far, givenPitch_ + mu::rad2deg(std::atan2(tagFirst_[0], tagFirst_[2])), givenRoll_ - mu::rad2deg(std::atan2(tagFirst_[1], tagFirst_[2])),
+                 givenPitch_ + mu::rad2deg(std::atan2(mx, h)), givenRoll_ - mu::rad2deg(std::atan2(my, h)));
 }
 
 bool FlightReplay::latest(Frame& out, uint64_t, double) {
