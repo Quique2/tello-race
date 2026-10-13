@@ -6,6 +6,8 @@
 #include <fstream>
 #include <thread>
 
+#include <opencv2/imgcodecs.hpp>
+
 #include "util/Log.h"
 #include "util/MathUtil.h"
 
@@ -17,7 +19,9 @@ double printedStep(double t) { return t > 0 ? std::pow(10.0, std::floor(std::log
 }  // namespace
 
 FlightReplay::FlightReplay(const Config& cfg, const std::string& videoPath, const std::string& csvPath, bool realtime)
-    : videoPath_(videoPath), csvPath_(csvPath), realtime_(realtime), tagEveryN_(std::max(1, cfg.getInt("tag.every_n_frames", 1))) {}
+    : videoPath_(videoPath), csvPath_(csvPath), realtime_(realtime), tagEveryN_(std::max(1, cfg.getInt("tag.every_n_frames", 1))),
+      jpegQuality_(mu::clamp(cfg.getInt("replay.jpeg_quality", 0), 0, 100)), givenPitch_(cfg.getDouble("camera.pitch_deg", 0)),
+      givenRoll_(cfg.getDouble("camera.roll_deg", 0)) {}
 
 bool FlightReplay::loadCsv(std::string* err) {
     auto fail = [&](const std::string& why) { if (err) *err = "replay: " + csvPath_ + ": " + why; return false; };
@@ -31,7 +35,7 @@ bool FlightReplay::loadCsv(std::string* err) {
         return -1;
     };
     const int cT = col("t"), cSeq = col("seq"), cPhase = col("phase"), cBat = col("bat"), cTof = col("tof"), cH = col("h"), cYaw = col("yaw"),
-              cPitch = col("pitch"), cRoll = col("roll"), cTag = col("tag_id"), cRc = col("rc_lr");
+              cPitch = col("pitch"), cRoll = col("roll"), cTag = col("tag_id"), cTagX = col("tag_x"), cTagY = col("tag_y"), cRc = col("rc_lr");
     if (cT < 0 || cSeq < 0 || cPhase < 0 || cBat < 0 || cTof < 0 || cH < 0 || cYaw < 0 || cPitch < 0 || cRoll < 0 || cRc < 0 ||
         cRc + 3 >= (int)head.size())
         return fail("not a csv of the ground station's RECORD (columns t, seq, phase, bat, tof, h, yaw, pitch, roll, rc_lr.. expected)");
@@ -45,7 +49,7 @@ bool FlightReplay::loadCsv(std::string* err) {
         r.seq = strtoull(v[cSeq].c_str(), nullptr, 10);
         const std::string ph = trim(v[cPhase]);
         r.ground = ph == "IDLE" || ph == "LANDED" || ph == "ABORTED";
-        r.tag = cTag >= 0 && atoi(v[cTag].c_str()) >= 0;
+        if (cTag >= 0 && cTagX >= 0 && cTagY >= 0) { r.tagId = atoi(v[cTag].c_str()); r.tagX = atof(v[cTagX].c_str()); r.tagY = atof(v[cTagY].c_str()); }
         r.st.valid = true;
         r.st.bat = atoi(v[cBat].c_str()); r.st.tof = atoi(v[cTof].c_str()); r.st.h = atoi(v[cH].c_str());
         r.st.yaw = atoi(v[cYaw].c_str()); r.st.pitch = atoi(v[cPitch].c_str()); r.st.roll = atoi(v[cRoll].c_str());
@@ -108,7 +112,7 @@ bool FlightReplay::loadCsv(std::string* err) {
     first_ = 0;
     if (tagEveryN_ > 1) {
         for (size_t i = 0; i < n; ++i)
-            if (rows_[i].tag) { first_ = std::min((i + 1) % (size_t)tagEveryN_, takeoff_); break; }
+            if (rows_[i].tagId >= 0) { first_ = std::min((i + 1) % (size_t)tagEveryN_, takeoff_); break; }
     }
     LOG_INFO("replay: %s: %zu rows, %.2f frames/s delivered, t column trusted %.0f %% (printed to %.2g s)", csvPath_.c_str(), n, fps_,
              100.0 * trust, step);
@@ -181,6 +185,24 @@ void FlightReplay::compareSticks() {
     else if (++apartRun_ >= 12 && apartT_ < 0) apartT_ = rows_[cur_ - 11].t - airborneT_;
 }
 
+// The tag in the frame just played against where the flight saw it in the same frame. The pixels are the same, so a
+// steady difference is the camera angle: the flight had another one in force than the replay was given.
+void FlightReplay::observed(const Observation& obs) {
+    if (!delivered_ || cur_ <= takeoff_ || cur_ > last_) return;
+    const Row& r = rows_[cur_];
+    const TagObservation* t = r.tagId >= 0 ? obs.tag(r.tagId) : nullptr;
+    if (r.tagId >= 0 && !t) ++tagOnlyFlight_;
+    if (r.tagId < 0 && !obs.tags.empty()) ++tagOnlyHere_;
+    if (!t) return;
+    const double dx = t->X - r.tagX, dy = t->Y - r.tagY;
+    ++tagN_;
+    tagSum_[0] += dx; tagSum_[1] += dy;
+    tagSq_ += dx * dx + dy * dy;
+    tagHeight_ += obs.heightM;
+    LOG_DEBUG("RPL t=%.2f seq=%llu tag ID%d here=(%.3f,%.3f) flown=(%.3f,%.3f)", now_ - airborneT_, (unsigned long long)r.seq, r.tagId, t->X, t->Y,
+              r.tagX, r.tagY);
+}
+
 void FlightReplay::finish(const char* why) {
     if (ended_) return;
     ended_ = true;
@@ -190,6 +212,16 @@ void FlightReplay::finish(const char* why) {
     if (apartT_ >= 0) snprintf(apart, sizeof(apart), "apart by more than 25 for 0.5 s from t=%.2f", apartT_);
     LOG_INFO("replay: sticks against the flight's over %d frames: rms difference lr %.1f fb %.1f ud %.1f yaw %.1f; %s", diffN_,
              std::sqrt(diffSq_[0] / n), std::sqrt(diffSq_[1] / n), std::sqrt(diffSq_[2] / n), std::sqrt(diffSq_[3] / n), apart);
+    if (tagN_ + tagOnlyFlight_ + tagOnlyHere_ == 0) return;
+    const double m = std::max(1, tagN_), mx = tagSum_[0] / m, my = tagSum_[1] / m, h = tagHeight_ / m;
+    LOG_INFO("replay: tags against where the flight saw them, on %d frames: mean (%+.3f, %+.3f) m, rms %.3f m; seen only in the flight on %d, only here on %d",
+             tagN_, mx, my, std::sqrt(tagSq_ / m), tagOnlyFlight_, tagOnlyHere_);
+    // 2 cm at flying height is a degree of camera angle: more than the frame-to-frame scatter of the tag centre.
+    // A point of the floor moves back as the camera is tilted further down and left as it is rolled.
+    if (tagN_ >= 5 && std::hypot(mx, my) > 0.02 && h > 0.2)
+        LOG_WARN("replay: the tags lie %.0f cm from where the flight saw them: it flew with another camera angle than the one given "
+                 "(on average about camera.pitch_deg=%.1f camera.roll_deg=%.1f; a station that has flown before measures it again in flight)",
+                 100 * std::hypot(mx, my), givenPitch_ + mu::rad2deg(std::atan2(mx, h)), givenRoll_ - mu::rad2deg(std::atan2(my, h)));
 }
 
 bool FlightReplay::latest(Frame& out, uint64_t, double) {
@@ -205,6 +237,12 @@ bool FlightReplay::latest(Frame& out, uint64_t, double) {
         ++framesRead_;
     }
     if (img.empty()) { finish("the video ends before the csv"); return false; }
+    if (jpegQuality_ > 0) {
+        // One more JPEG generation, as the recorder put one on the frame the flight saw: what is decided the same
+        // way with it does not hang on single pixels.
+        std::vector<uchar> buf;
+        if (cv::imencode(".jpg", img, buf, {cv::IMWRITE_JPEG_QUALITY, jpegQuality_})) img = cv::imdecode(buf, cv::IMREAD_COLOR);
+    }
     if (realtime_) {   // at the pace of the flight; the seconds a blocking command took are not waited for again
         const double due = lastWall_ + mu::clamp(rows_[i].t - lastRowT_, 0.0, 0.25);
         if (wallNow() < due) std::this_thread::sleep_for(std::chrono::duration<double>(due - wallNow()));

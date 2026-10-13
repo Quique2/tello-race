@@ -288,6 +288,7 @@ int MissionLoop::run() {
         if (got) {
             double tp = wall.now();
             obs = perception_.process(frame.image, st, frame.stamp, frame.seq);
+            if (rec) rec->observed(obs);
             const double pm = (wall.now() - tp) * 1000;
             percMs_ += pm; iterMs_ += (wall.now() - tIter0) * 1000; tagMsAcc_ += obs.tagMs; lineMsAcc_ += obs.lineMs; ++perfN_;
             totPercMs_ += pm; totTagMs_ += obs.tagMs; totLineMs_ += obs.lineMs; ++totFrames_;
