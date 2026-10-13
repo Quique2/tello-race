@@ -64,9 +64,17 @@ struct CourseParams {
     double traceHz = 5;                   // debug log: this many lines a second about what the navigator is doing (0 = none)
     // course.heading = fixed: the drone keeps the heading it took off with and moves sideways / backwards as needed.
     // course.heading = path: the nose turns to point along the route. Same path following underneath.
-    bool headingFollow = false;
+    // course.heading = lead: as path, but the nose turns AHEAD of the route (the lead* values below). A mode of its
+    // own so that the two that have flown the real course stay exactly as they flew.
+    bool headingFollow = false;           // path or lead: the nose turns
+    bool headingLead = false;             // lead
     double headingLookM = 0.25;           // the nose aims at the route this far beyond the preview point
     double maxYawRc = 60;                 // yaw stick limit while turning with the path
+    double leadKYaw = 1.5, leadMaxYawRc = 100;   // lead: yaw stick units per degree, and the yaw stick limit
+    double leadLookM = 0.15, leadLookS = 0.7;    // lead: the nose takes the direction the route HAS this far beyond the
+                                                 // preview point, plus this many seconds of travel (it needs time to come round)
+    double leadSlowDeg = 25;              // lead, > 0: fly slower while the nose is further than this from where it should point
+    double leadSlowMin = 0.45;            // ... down to this share of the speed, 60 degrees further off
     double camAheadM = 0.06;              // the camera looks down from the mirror, this far ahead of the drone's centre
     double maxRangeM = 0;                 // > 0: land when the drone seems to be further than this from where it took off
     double accel = 0.7, latAccel = 0.5;                                      // m/s^2: braking and cornering limits
@@ -125,8 +133,9 @@ public:
     double speedMs() const;                   // modelled ground speed
     double rcGain() const { return cs_.gain; }
     bool rcGainMeasured() const { return cs_.gainSamples >= 20; }
-    bool courseHeadingFollow() const { return cp_.headingFollow; }       // nose along the route (true) or fixed (false)
-    void setCourseHeadingFollow(bool on) { cp_.headingFollow = on; }
+    // the nose: "fixed" (keeps the take-off heading), "path" (turns with the route) or "lead" (turns ahead of it)
+    const char* courseNoseMode() const { return cp_.headingLead ? "lead" : cp_.headingFollow ? "path" : "fixed"; }
+    bool setCourseNoseMode(const std::string& name);                     // false: no such mode, nothing changed
 
 private:
     void setPhase(Phase ph, const char* why);
@@ -198,6 +207,8 @@ private:
         cv::Point2d vPred;                           // modelled velocity when a command sent now starts to act
         cv::Point2d vW;                              // the modelled velocity in a frame that does not turn with the nose
         double yawRate = 0;                          // deg/s, how fast the nose is turning (telemetry)
+        double lastPsiImg = 0;                       // lead: heading at the time of the previous picture
+        bool psiImgValid = false;
         std::deque<std::pair<double, cv::Point2d>> cmdHist;   // what was sent and when: it acts cmdDelayS later
         std::deque<std::pair<double, cv::Point2d>> vHist;
         double gain = 0.015;

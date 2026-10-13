@@ -33,7 +33,7 @@ body.manual .mission-only{display:none}body.mission .manual-only{display:none}
 #msg{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--warn);color:#000;padding:10px 16px;border-radius:8px;font-weight:600;z-index:9;max-width:90vw;box-shadow:0 4px 16px #0008}
 button.arm{background:var(--warn)!important;color:#000}input[type=range]{width:100%}
 .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px}.cols button{opacity:.45;border:2px solid transparent}
-.cols button.sel{opacity:1;border-color:#fff}#cBlue{background:#1f5fff}#cYellow{background:#ffd400;color:#000}#cDark{background:#222}#hFixed,#hPath{background:#3a4660}
+.cols button.sel{opacity:1;border-color:#fff}#cBlue{background:#1f5fff}#cYellow{background:#ffd400;color:#000}#cDark{background:#222}#hFixed,#hPath,#hLead{background:#3a4660}
 </style></head><body class="mission">
 )HTML";
 
@@ -51,7 +51,7 @@ static const char* kPageB = R"HTML(<header><h1>tello_race</h1><span><span class=
   <div class="grid"><div><span>segments</span> <b id="seg">0</b></div><div><span>time</span> <b id="t">0.0 s</b></div>
   <div><span>tag</span> <b id="tag">-</b></div><div><span>rc</span> <b id="rc">-</b></div></div></div>
 <div class="panel op"><h2>Path to follow</h2><div class="cols"><button id="cBlue">BLUE</button><button id="cYellow">YELLOW</button><button id="cDark">BLACK</button></div>
- <div class="cols" style="margin-top:6px"><button id="hFixed">NOSE FIXED</button><button id="hPath">NOSE FOLLOWS PATH</button></div>
+ <div class="cols" style="margin-top:6px"><button id="hFixed">NOSE FIXED</button><button id="hPath">NOSE FOLLOWS PATH</button><button id="hLead">NOSE TURNS AHEAD</button></div>
  <p class="hint" id="colHint">the route the drone is following is drawn on the video in this colour</p></div>
 <p class="kv op">mirror flip: <select id="mirror"><option value="none">none</option><option value="vertical">vertical</option><option value="horizontal">horizontal</option><option value="both">both</option></select> <span class="hint">(mirror mount: pick the one that makes text readable)</span></p>
  <div class="panel op mission-only"><h2>Mission controls</h2><div class="btns">

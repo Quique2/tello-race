@@ -98,7 +98,7 @@ struct StateSnapshot {
     int noticeId = 0;
     std::vector<std::string> events;
     std::string lineColor = "dark";           // tape colour being followed: dark | blue | yellow | hsv
-    std::string heading = "fixed";            // course mode: nose "fixed" or turning with the "path"
+    std::string heading = "fixed";            // course mode: nose "fixed", turning with the "path", or ahead of it ("lead")
     bool course = false;                      // course mode (camera looking down)
     int nextTag = 0;                          // next tag to fly over (course mode)
     double speed = 0;                         // modelled ground speed, m/s (course mode)

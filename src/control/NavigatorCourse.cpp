@@ -1,7 +1,8 @@
 // Course mode of the navigator: the camera looks steeply down (mirror in front of the lens), so the tape is seen
 // from above as centre-lines on the floor (Observation::paths). The drone follows the tape with a pure-pursuit
 // law on those lines, flies over the tag at the end of each one and takes the nearest other tape end as the start
-// of the next segment. It never turns: heading is held and the drone moves forwards, sideways or backwards.
+// of the next segment. It never turns: heading is held and the drone moves forwards, sideways or backwards
+// (course.heading = fixed; with path or lead the nose turns along the route, the path following is the same).
 #include "control/Navigator.h"
 
 #include <algorithm>
@@ -35,9 +36,17 @@ void CourseParams::load(const Config& c) {
     mountPitchMinDeg = c.getDouble("course.mount_pitch_min_deg", mountPitchMinDeg);
     mountPitchMaxDeg = c.getDouble("course.mount_pitch_max_deg", mountPitchMaxDeg);
     traceHz = c.getDouble("course.trace_hz", traceHz);
-    headingFollow = toLower(c.getString("course.heading", headingFollow ? "path" : "fixed")) == "path";
+    const std::string nose = toLower(c.getString("course.heading", headingLead ? "lead" : headingFollow ? "path" : "fixed"));
+    headingLead = nose == "lead";
+    headingFollow = headingLead || nose == "path";
     headingLookM = c.getDouble("course.heading_look_m", headingLookM);
     maxYawRc = c.getDouble("course.max_yaw_rc", maxYawRc);
+    leadKYaw = c.getDouble("course.lead_k_yaw", leadKYaw);
+    leadMaxYawRc = c.getDouble("course.lead_max_yaw_rc", leadMaxYawRc);
+    leadLookM = c.getDouble("course.lead_look_m", leadLookM);
+    leadLookS = c.getDouble("course.lead_look_s", leadLookS);
+    leadSlowDeg = c.getDouble("course.lead_slow_deg", leadSlowDeg);
+    leadSlowMin = c.getDouble("course.lead_slow_min", leadSlowMin);
     camAheadM = c.getDouble("course.camera_ahead_m", camAheadM);
     maxRangeM = c.getDouble("course.max_range_m", maxRangeM);
     biasMax = c.getDouble("course.bias_max_ms", biasMax);
@@ -149,6 +158,13 @@ int Navigator::nextTagId() const {
 
 double Navigator::speedMs() const { return flying() ? norm(cs_.vModel) : 0.0; }
 
+bool Navigator::setCourseNoseMode(const std::string& name) {
+    if (name != "fixed" && name != "path" && name != "lead") return false;
+    cp_.headingLead = name == "lead";
+    cp_.headingFollow = cp_.headingLead || name == "path";
+    return true;
+}
+
 void Navigator::stepCourse(const Observation& obs, const TelloState& st) {
     if (phase_ == Phase::Idle || finished()) { landRequested_ = false; return; }
     if (landRequested_) { courseLand("land requested", Phase::Aborted); return; }
@@ -228,7 +244,9 @@ void Navigator::courseCommand(const cv::Point2d& vel, const TelloState& st) {
     double yaw = 0;
     if (c.yaw0Valid && st.valid && !c.yawHoldOff) {
         const double err = mu::wrapDeg(c.yawRef - st.yaw);
-        if (cp_.headingFollow) {
+        if (cp_.headingLead) {
+            yaw = mu::clamp(cp_.leadKYaw * err, -cp_.leadMaxYawRc, cp_.leadMaxYawRc);
+        } else if (cp_.headingFollow) {
             yaw = mu::clamp(cp_.kYawHold * err, -cp_.maxYawRc, cp_.maxYawRc);
         } else if (std::fabs(err) > 25.0) {
             // held, and still 25 degrees away: the hold is pushing the wrong way or cannot keep up. Without it the drone
@@ -400,6 +418,16 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
         pd += c.vPred * h;
         c.vPred += (turn(sentAt(now_ + s - cp_.cmdDelayS), -psi(now_ + s)) - c.vPred) * std::min(1.0, h / tauR);
     }
+    // Lead: the nose turns fast, so what is remembered from earlier pictures turns by as much as the nose turned
+    // between the two pictures (not between the two newest telemetry packets: the picture is older, and the turn
+    // rate changes quickly).
+    const bool noseLead = turning && cp_.headingLead;
+    if (noseLead) {
+        const double pI = psi(tImg);
+        dyaw = c.psiImgValid ? mu::wrapDeg(pI - c.lastPsiImg) : 0.0;
+        c.lastPsiImg = pI;
+        c.psiImgValid = true;
+    }
     // ... all of it as seen in the picture being used
     pd = turn(pd, psi(tImg));
     vThen = turn(vThen, psi(tImg));
@@ -409,7 +437,10 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
     pd.x -= cp_.camAheadM;
     const double ca = std::cos(mu::deg2rad(dyaw)), sa = std::sin(mu::deg2rad(dyaw));
     auto rot = [&](const cv::Point2d& p) { return cv::Point2d(p.x * ca - p.y * sa, p.x * sa + p.y * ca); };
-    auto move = [&](const cv::Point2d& p) { return rot(p - vThen * dt); };   // floor point: previous image frame -> this one
+    // floor point: previous image frame -> this one. Lead: the drone turns about its own centre, and everything seen
+    // is measured from the point under the camera, which swings round that centre on an arm of camAheadM.
+    const cv::Point2d arm(cp_.camAheadM, 0.0);
+    auto move = [&](const cv::Point2d& p) { return noseLead ? rot(p + arm - vThen * dt) - arm : rot(p - vThen * dt); };
     for (auto& t : c.tags) { t.p = move(t.p); t.fresh = false; }
     if (c.havePrev) { c.prevTarget = move(c.prevTarget); c.prevBehind = move(c.prevBehind); }
     if (c.haveStart) c.startPos = move(c.startPos);
@@ -913,6 +944,11 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
     c.finalDescent = cp_.finishAltCm > 0 && !wps.empty() && wps.front().type == WpTag && lastTag(wps.front().tagId) &&
                      route.cum[std::min((size_t)wps.front().idx, route.cum.size() - 1)] < cp_.finishDescentM;
     if (h > 0 && !c.finalDescent && std::fabs(p_.altitudeCm + c.altBoostCm - h) > 25) v = std::min(v, cp_.vClimb);
+    if (cp_.headingLead && st.valid && cp_.leadSlowDeg > 0) {
+        // the nose turns more slowly than the path does at a sharp corner: give it time to come round
+        const double off = std::fabs(mu::wrapDeg(c.yawRef - st.yaw));
+        if (off > cp_.leadSlowDeg) v *= std::max(cp_.leadSlowMin, 1.0 - (off - cp_.leadSlowDeg) / 60.0);
+    }
     v = std::min(std::max(v, cp_.vMin), vStop);
 
     // ---- LINE 5: direction. Along the route towards a point a little ahead of the drone (far enough to turn in
@@ -936,7 +972,32 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
     if (cp_.headingFollow && st.valid && route.length() > 0.08) {
         // The nose aims along the route, a little further ahead than the preview point (a steadier direction). The
         // heading wanted is kept as a telemetry heading, so the turn itself is closed on the drone's own compass.
-        const cv::Point2d hd = unit(route.at(std::min(sLook + cp_.headingLookM, route.length())) - p0);
+        // Lead: not AT a point ahead but the way the route runs there, so the nose turns before the corner and,
+        // across a gap, already points along the next tape ...
+        cv::Point2d hd(0, 0);
+        if (cp_.headingLead) {
+            double sH = std::min(sLook + cp_.leadLookM + cp_.leadLookS * speedNow, route.length());
+            bool hold = false;
+            if (leadIn) {
+                // ... the next tape itself, not the way to it (the two directions differ by up to 110 degrees here and
+                // the nose would swing towards one and then the other); nothing to go by while that tape is not seen
+                if (li < 0) hold = true;
+                else if (!wps.empty() && wps.front().type == WpStart)
+                    sH = std::max(sH, std::min(route.cum[std::min((size_t)wps.front().idx, route.cum.size() - 1)] + 0.04, route.length()));
+            }
+            // ... and never beyond the end of a tape that leads to a tag not yet flown over: the nose stays along that
+            // tape until the tag is reached (and is held over the last hand-span, where only the step from the tape end
+            // to the tag is left to go by). Seen at about 45 degrees to the drone's axes the last straight piece of a
+            // tape is lost from the picture's centre-lines, from its free end back to the nearest bend, and it is the
+            // direction of that piece in the frame the tag is reached that tells the tape the drone came on from the
+            // next one (simulator: with the nose already swinging towards the next tape, 1 flight in 30 went back).
+            bool tagAhead = false;
+            for (const Wp& w : wps) tagAhead = tagAhead || w.type == WpTag;
+            if (tagAhead) { sH = std::min(sH, tapeLeft - 0.04); hold = hold || tapeLeft < 0.08; }
+            if (!hold) hd = route.tangent(sH);
+        } else {
+            hd = unit(route.at(std::min(sLook + cp_.headingLookM, route.length())) - p0);
+        }
         if (norm(hd) > 0.5) {
             const double want = mu::wrapDeg(yawAt(c.yawHist, tImg, st.yaw) - mu::rad2deg(std::atan2(hd.y, hd.x)));
             c.yawRef = mu::wrapDeg(c.yawRef + 0.35 * mu::wrapDeg(want - c.yawRef));

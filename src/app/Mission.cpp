@@ -486,14 +486,14 @@ void MissionLoop::setLineColor(const std::string& name) {
     notice("now following the " + perception_.lineDetector().color() + " tape");
 }
 
-// Course mode: does the nose stay where it pointed at take-off, or turn with the route? Same rule as the colour:
-// not while a mission is in the air.
+// Course mode: does the nose stay where it pointed at take-off, turn with the route, or turn ahead of it? Same rule
+// as the colour: not while a mission is in the air.
 void MissionLoop::setHeading(const std::string& name) {
-    if (name != "fixed" && name != "path") { notice("unknown heading mode '" + name + "' (fixed or path)"); return; }
+    if (name != "fixed" && name != "path" && name != "lead") { notice("unknown heading mode '" + name + "' (fixed, path or lead)"); return; }
     if (!nav_.courseMode()) { notice("heading mode only applies to the course profile"); return; }
     if (!manual_ && nav_.flying()) { notice("heading mode not changed: the mission is flying (land, or switch to MANUAL first)"); return; }
-    nav_.setCourseHeadingFollow(name == "path");
-    notice(name == "path" ? "the nose will turn with the path" : "the nose will keep its take-off heading");
+    nav_.setCourseNoseMode(name);
+    notice(name == "lead" ? "the nose will turn ahead of the path" : name == "path" ? "the nose will turn with the path" : "the nose will keep its take-off heading");
 }
 
 void MissionLoop::setManual(bool on) {
@@ -519,7 +519,7 @@ std::string MissionLoop::stateJson(const Observation& obs, const TelloState& st,
     s.notice = notice_; s.noticeId = noticeId_;
     s.mirror = flipName_;
     s.lineColor = perception_.lineDetector().color();
-    s.heading = nav_.courseHeadingFollow() ? "path" : "fixed";
+    s.heading = nav_.courseNoseMode();
     s.course = nav_.courseMode();
     s.nextTag = nav_.nextTagId();
     s.speed = nav_.speedMs();
@@ -562,7 +562,11 @@ bool MissionLoop::handleKey(int key) {
         case 'b': setLineColor("blue"); return true;
         case 'y': setLineColor("yellow"); return true;
         case 'k': setLineColor("dark"); return true;
-        case 'n': setHeading(nav_.courseHeadingFollow() ? "fixed" : "path"); return true;   // nose: fixed <-> along the path
+        case 'n': {   // nose: fixed -> along the path -> ahead of the path -> fixed
+            const std::string nose = nav_.courseNoseMode();
+            setHeading(nose == "fixed" ? "path" : nose == "path" ? "lead" : "fixed");
+            return true;
+        }
         case 'v': {   // toggle front / belly camera (SDK 3.0 "downvision"); the stream is reopened
             auto* td = dynamic_cast<TelloDrone*>(&drone_);
             if (!td) { LOG_INFO("camera switch is only available on the real drone"); return true; }
@@ -627,7 +631,10 @@ void MissionLoop::drawHud(cv::Mat& canvas, const Observation& obs, const TelloSt
     const cv::Scalar colBgr = colName == "blue" ? cv::Scalar(255, 120, 0) : colName == "yellow" ? cv::Scalar(0, 220, 255) : cv::Scalar(60, 60, 60);
     {
         std::string label = "FOLLOW " + std::string(colName == "blue" ? "BLUE" : colName == "yellow" ? "YELLOW" : colName == "dark" ? "BLACK" : "HSV");
-        if (nav_.courseMode()) label += nav_.courseHeadingFollow() ? "  NOSE: PATH" : "  NOSE: FIXED";
+        if (nav_.courseMode()) {
+            const std::string nose = nav_.courseNoseMode();
+            label += nose == "lead" ? "  NOSE: AHEAD" : nose == "path" ? "  NOSE: PATH" : "  NOSE: FIXED";
+        }
         int base = 0;
         cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.6, 2, &base);
         cv::Rect box(canvas.cols - ts.width - 22, 124, ts.width + 16, ts.height + 12);

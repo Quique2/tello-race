@@ -46,9 +46,10 @@ tello_race fly --profile config/course_tec.ini --set web.enabled=1
 
 On the ground-station page the panel **Path to follow** has three buttons, BLUE / YELLOW / BLACK. The video shows
 which one is active ("FOLLOW BLUE") and draws the route the drone is following in that colour, with a green cross
-on the next tag or line start. Under them, **NOSE FIXED / NOSE FOLLOWS PATH** chooses whether the drone keeps its
-take-off heading or turns with the route (the video label says `NOSE: FIXED` or `NOSE: PATH`). Both can be changed
-on the ground or in MANUAL, not while the mission flies. Keys in the desktop window: `b`, `y`, `k`, and `n` for the nose.
+on the next tag or line start. Under them, **NOSE FIXED / NOSE FOLLOWS PATH / NOSE TURNS AHEAD** chooses whether the
+drone keeps its take-off heading, turns with the route, or turns ahead of it (the video label says `NOSE: FIXED`,
+`NOSE: PATH` or `NOSE: AHEAD`). Both can be changed on the ground or in MANUAL, not while the mission flies. Keys in
+the desktop window: `b`, `y`, `k`, and `n` for the nose (fixed, path, ahead, fixed ...).
 
 ## Placing the drone
 
@@ -237,6 +238,65 @@ the nose will have when the command acts.
 `course.camera_ahead_m = 0.06`: the mirror looks down from 6 cm ahead of the drone's centre. It is the centre that
 is kept on the tape and over the tags, in both modes.
 
+## The third nose mode: turning ahead (`course.heading = lead`)
+
+In the recorded path-mode flight the nose lagged the direction of travel: within 15° of it for 34 % of the flight,
+more than 45° off for 41 %. The real drone turns 0.65°/s per yaw stick unit (`sim.rc_yaw_rate`, now in the profile;
+the simulator assumed 1.2) and path mode limits the yaw stick to 40. With that rate the simulator shows the same lag.
+
+`lead` is a mode of its own, so that the two modes that have flown the real course fly exactly as they did: for
+`fixed` and `path` the simulator output is the same as before, event for event (8 seeds each, first and later
+flights). What `lead` does differently from `path`:
+
+* the yaw stick goes up to 100 (65°/s) at 1.5 stick units per degree (`lead_max_yaw_rc`, `lead_k_yaw`);
+* the nose takes the direction the route *has* at a point ahead (`lead_look_m` + `lead_look_s` × speed beyond the
+  preview point) instead of pointing *at* a point: it turns before a corner, and across the gap after a tag it takes
+  the direction of the next tape itself;
+* the drone flies slower while the nose is more than `lead_slow_deg` (25°) from where it should point, down to
+  `lead_slow_min` (0.45) of the speed, reached 60° further off;
+* what is remembered from earlier pictures is turned by the heading change between the two pictures, about the
+  drone's centre (the camera is 6 cm ahead of it).
+
+**The nose does not look past a tag.** Until a tag is flown over, the nose stays along the tape that leads to it and
+turns towards the next tape only after. As first written the nose swung towards the next tape before the tag, and 1
+simulated flight in 30 flew back along the tape it had come on at tag 3. The cause is in the vision and concerns
+every mode: when the last straight piece of a tape lies at 40 - 60° to the drone's axes, the thinning of the
+top-down grid (Zhang-Suen) eats it from its free end, up to the whole piece back to the nearest bend. In the last
+1.5 s before tags 2 and 3 (18 flights each of `path`, `lead` and `lead` as first written) the end was lost in 74 of
+the 526 frames in which that piece lay at 30 - 60° to an axis (40 % of those at 40 - 50°), and in 1 of 3060 within
+30° of an axis. The tape that leads to tag 3 bends by 55° a hand-span before its end: with the end lost, the
+direction of travel in the frame the tag is reached is that of the piece before the bend, the tape just flown no
+longer looks like the one the drone came on, and the next tape does. How the tape end lies to the drone's axes in the
+last 0.2 s before a tag (18 flights each):
+
+| | tag 2: median / worst | tag 3: median / worst | frames with the end lost |
+|---|---|---|---|
+| path | 29° / 45° | 18° / 30° | 6 of 229 |
+| lead | 0° / 13° | 5° / 19° | 0 of 238 |
+
+Simulator with the real drone's response, 30 flights each:
+
+| | finished | course time | path error mean / worst moment | nose within 15° of the travel direction | more than 45° off |
+|---|---|---|---|---|---|
+| path, later flights | 30 / 30 | 26.8 s | 3.5 cm / 12.1 cm | 28 % | 43 % |
+| lead, later flights | 30 / 30 | 31.7 s | 3.7 cm / 12.5 cm | 54 % | 23 % |
+| lead, first flight | 30 / 30 | 41.1 s | 3.8 cm / 14.8 cm | 54 % | 24 % |
+| the real flight in path mode | | | | 34 % | 41 % |
+
+The 5 s more are the slowing while the nose comes round (without it: 27.6 s, 46 % / 31 %). Of the moments beyond
+45°, 90 % fall in the two seconds after a tag, 70 % in the gap itself: there the nose already looks along the next
+tape while the drone still flies to its start, and it starts to turn late (the yaw stick is slewed like the others,
+0.4 s to full, and in the simulator the yaw answers 0.35 s after that). With a simulated drone that differs from the
+navigator's model, 12 flights each, all finished: answering 30 % slower or faster, yaw rate 0.45 or 1.0°/s per
+unit, yaw time constant 0.5 s, sticks below 8 units doing nothing (path error 4.0 - 5.0 cm mean).
+
+How the values were chosen (12 flights each, all finished; 51 % / 24 % for the chosen ones at that stage, before
+the nose took the next tape's own direction across a gap): a gain of 2.5 swings the nose 10 - 20° past and aims no
+better (49 % / 25 %); a stick limit of 70 costs little (47 % / 26 %), 50 gives half of it away (41 % / 29 %);
+slowing down to 0.3 of the speed gains nothing (51 % / 25 %).
+
+`lead` has flown in the simulator only.
+
 ## The first real flights (2026-10-12)
 
 Five missions with the nose fixed, from the page. The fifth flew the whole course, tags 1-2-3-4 and a landing on
@@ -308,7 +368,10 @@ view (the next tape starts next to the tag).
 * everything in "The recorded flight" above: the new controller, the paler tape limit and the return over the tag
   have flown in the simulator only;
 * the nose-follows-path mode has only flown in the simulator, and how the real drone's yaw answers is not measured
-  (record a flight in that mode: the same fit will tell).
+  (record a flight in that mode: the same fit will tell);
+* the `lead` nose mode has flown in the simulator only. Of the real yaw only the rate is measured (0.65°/s per
+  stick unit, from a flight limited to 40): whether it holds up to a stick of 100, and how late the yaw answers,
+  a recorded flight in that mode will tell.
 
 To record a flight: press RECORD on the page before START (video, telemetry table and log go to `logs/` on the Pi).
 
