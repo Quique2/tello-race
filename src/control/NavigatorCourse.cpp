@@ -61,6 +61,8 @@ void CourseParams::load(const Config& c) {
     tagCaptureM = c.getDouble("course.tag_capture_m", tagCaptureM);
     startCaptureM = c.getDouble("course.start_capture_m", startCaptureM);
     tagAssocM = c.getDouble("course.tag_assoc_m", tagAssocM);
+    nextMinStartM = c.getDouble("course.next_min_start_m", nextMinStartM);
+    arrivalSideCos = c.getDouble("course.arrival_side_cos", arrivalSideCos);
     nextSearchM = c.getDouble("course.next_search_m", nextSearchM);
     firstSearchM = c.getDouble("course.first_search_m", firstSearchM);
     lostCoastS = c.getDouble("course.lost_coast_s", lostCoastS);
@@ -282,6 +284,9 @@ void Navigator::courseTagReached(int id, const cv::Point2d& pos, const Observati
     c.anchorTag = id;
     c.goalTag = -1;
     c.arrivalDir = c.travelDir;
+    // Which side of the tag the drone came from: towards the point of the tape 15 cm behind it. That does not depend
+    // on how the drone was pointing or moving when the tag was reached, nor on how the end of the tape came out.
+    c.arrivalFrom = c.havePrev && norm(c.prevBehind - pos) > 0.10 ? unit(c.prevBehind - pos) : c.travelDir * -1.0;
     c.endSince = -1;
     if (id == cp_.finishId || c.k >= (int)cp_.order.size()) {
         c.stage = CourseState::Finish;
@@ -307,7 +312,7 @@ void Navigator::courseTagReached(int id, const cv::Point2d& pos, const Observati
 }
 
 // The next segment starts at the tape end nearest to a tag (anchor), the tape the drone comes on excepted.
-bool Navigator::courseFindNext(const Observation& obs, int excludeLine, const cv::Point2d& anchor, const cv::Point2d& arrivalDir,
+bool Navigator::courseFindNext(const Observation& obs, int excludeLine, const cv::Point2d& anchor, const cv::Point2d& arrivalDir, const cv::Point2d& arrivalFrom,
                                int& line, int& end, double& dist) const {
     const CourseState& c = cs_;
     int best = -1, bestEnd = 0;
@@ -321,6 +326,9 @@ bool Navigator::courseFindNext(const Observation& obs, int excludeLine, const cv
             const cv::Point2d p = e ? L.pts.back() : L.pts.front();
             const double d = norm(p - anchor);
             if (d >= bd) continue;
+            if (d < cp_.nextMinStartM) continue;                        // inside the tag: its dark cells traced as a piece of tape
+            // the tape the drone came on, whole or in pieces, lies on the side it came from
+            if (cp_.arrivalSideCos > 0 && d > 0.02 && unit(p - anchor).dot(arrivalFrom) > cp_.arrivalSideCos) continue;
             const cv::Point2d into = (e ? L.tangentB() : L.tangentA()) * -1.0;   // which way the tape runs from this end
             const bool behind = unit(p - anchor).dot(arrivalDir) < -0.85;
             if ((d < 0.35 || behind) && into.dot(arrivalDir) < -0.75) continue;   // a piece of the tape we arrive on
@@ -348,7 +356,7 @@ bool Navigator::courseChooseNext(const Observation& obs, int excludeLine) {
     CourseState& c = cs_;
     int best = -1, bestEnd = 0;
     double bd = 0;
-    if (!courseFindNext(obs, excludeLine, c.anchor, c.arrivalDir, best, bestEnd, bd)) return false;
+    if (!courseFindNext(obs, excludeLine, c.anchor, c.arrivalDir, c.arrivalFrom, best, bestEnd, bd)) return false;
     const PathLine& L = obs.paths[best];
     c.startPos = bestEnd ? L.pts.back() : L.pts.front();
     c.haveStart = true;
@@ -447,6 +455,7 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
     c.anchor = move(c.anchor);
     c.travelDir = rot(c.travelDir);
     c.arrivalDir = rot(c.arrivalDir);
+    c.arrivalFrom = rot(c.arrivalFrom);
     bool recalibrated = false;
     if (newFrame && obs.mountChanged) {      // the camera angle was corrected: everything remembered is seen elsewhere now
         const cv::Point2d s = obs.mountShift;
@@ -669,6 +678,7 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
         // an end of the tape we came on does not qualify, however close it lies
         auto ours = [&](const cv::Point2d& endPt, const cv::Point2d& into) {
             const cv::Point2d r = endPt - c.anchor;
+            if (cp_.arrivalSideCos > 0 && norm(r) > 0.02 && unit(r).dot(c.arrivalFrom) > cp_.arrivalSideCos) return true;
             return (norm(r) < 0.35 || unit(r).dot(c.arrivalDir) < -0.85) && into.dot(c.arrivalDir) < -0.75;
         };
         double bd = 0.20;
@@ -811,7 +821,9 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
                 // corner like any other and is flown over without stopping.
                 int nl = -1, ne = 0;
                 double nd = 0;
-                if (!lastTag(endTag->id) && courseFindNext(obs, li, endTag->p, tagInDir, nl, ne, nd)) {
+                const cv::Point2d back = c.prevBehind - endTag->p;       // the tape being followed lies on this side of the tag
+                if (!lastTag(endTag->id) &&
+                    courseFindNext(obs, li, endTag->p, tagInDir, c.havePrev && norm(back) > 0.10 ? unit(back) : tagInDir * -1.0, nl, ne, nd)) {
                     std::vector<cv::Point2d> nx = obs.paths[nl].pts;
                     if (ne) std::reverse(nx.begin(), nx.end());
                     full.p.insert(full.p.end(), nx.begin(), nx.end());
@@ -900,6 +912,7 @@ void Navigator::courseFly(const Observation& obs, const TelloState& st) {
             c.anchor = route.p[wps.front().idx];
             c.anchorTag = -1;
             c.arrivalDir = c.travelDir;
+            c.arrivalFrom = c.travelDir * -1.0;
             c.endSince = -1;
             if (!courseChooseNext(obs, li)) {
                 LOG_INFO("NAV no tag here and no further tape within %.1f m: looking around from higher up", cp_.nextSearchM);

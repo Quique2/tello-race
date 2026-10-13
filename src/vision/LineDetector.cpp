@@ -32,6 +32,7 @@ void LineParams::load(const Config& cfg) {
     tapeSAuto = cfg.getBool("line.tape_s_auto", tapeSAuto);
     tapeSMin = cfg.getInt("line.tape_s_min", tapeSMin);
     tapeSMargin = cfg.getInt("line.tape_s_margin", tapeSMargin);
+    tapePaleV = cfg.getDouble("line.tape_pale_v", tapePaleV);
     whiteDilatePx = cfg.getInt("line.white_dilate_px", whiteDilatePx);
     minWidthCm = cfg.getDouble("line.min_width_cm", minWidthCm);
     maxWidthCm = cfg.getDouble("line.max_width_cm", maxWidthCm);
@@ -123,10 +124,21 @@ void LineDetector::buildMask(const cv::Mat& bgr, const GroundProjector& proj,
         return lo;
     };
 
+    // the tape colour: as configured, plus the paler version of it where the picture is bright enough for a reflection
+    auto tapeMask = [&](const cv::Scalar& lo0, const cv::Scalar& hi) {
+        if (p_.tapePaleV <= 0 || whiteLevel_ <= 0 || sLo < 0 || sLo >= lo0[1]) { cv::inRange(hsv_, darker(lo0), hi, mask_); return; }
+        cv::Scalar lo = lo0;
+        lo[2] = std::max(12.0, lo[2] * expo);
+        cv::inRange(hsv_, lo, hi, mask_);
+        lo[1] = sLo;
+        lo[2] = std::max(lo[2], p_.tapePaleV * whiteLevel_);
+        cv::inRange(hsv_, lo, hi, pale_);
+        mask_ |= pale_;
+    };
     if (p_.colorMode == "blue") {
-        cv::inRange(hsv_, darker(p_.blueLo), p_.blueHi, mask_);
+        tapeMask(p_.blueLo, p_.blueHi);
     } else if (p_.colorMode == "yellow") {
-        cv::inRange(hsv_, darker(p_.yellowLo), p_.yellowHi, mask_);
+        tapeMask(p_.yellowLo, p_.yellowHi);
     } else if (p_.colorMode == "hsv") {
         cv::inRange(hsv_, p_.hsvLo1, p_.hsvHi1, mask_);
         if (p_.hsvRange2) {

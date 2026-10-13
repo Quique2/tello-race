@@ -87,6 +87,10 @@ struct CourseParams {
     double shapeTau = 0;                  // s, > 0: the sticks are overdriven so that the drone answers this fast
     double shapeMaxMs = 0.35;             // m/s, the most that overdrive may add
     double tagCaptureM = 0.05, startCaptureM = 0.06, tagAssocM = 0.45, nextSearchM = 1.0, firstSearchM = 1.2;
+    // Choosing the next tape at a tag (both 0 = off):
+    double nextMinStartM = 0;             // nothing that starts closer to the tag's centre than this is a tape (it is inside the tag)
+    double arrivalSideCos = 0;            // nothing that starts on the side of the tag the drone came from, within this cosine,
+                                          // is the next tape: the tape it came on lies there, in however many pieces
     double lostCoastS = 0.35, lostLandS = 5.0, endWaitS = 1.5;
     double finishCenterM = 0.035, finishCenterMaxS = 2.5;
     double finishAltCm = 0, finishDescentM = 0.6;   // > 0: come down to this height over the last stretch before the finish tag
@@ -156,7 +160,7 @@ private:
     void courseCommand(const cv::Point2d& vel, const TelloState& st);
     void courseTagReached(int id, const cv::Point2d& pos, const Observation& obs, int activeLine);
     bool courseChooseNext(const Observation& obs, int excludeLine);
-    bool courseFindNext(const Observation& obs, int excludeLine, const cv::Point2d& anchor, const cv::Point2d& arrivalDir,
+    bool courseFindNext(const Observation& obs, int excludeLine, const cv::Point2d& anchor, const cv::Point2d& arrivalDir, const cv::Point2d& arrivalFrom,
                         int& line, int& end, double& dist) const;
     void courseLand(const char* phaseWhy, Phase endPhase);
 
@@ -198,6 +202,7 @@ private:
         cv::Point2d fromStart{0, 0};                 // m: where the drone is from its take-off point, by dead reckoning
         bool haveStart = false, startCaptured = true;
         cv::Point2d startPos, anchor, arrivalDir{1, 0};
+        cv::Point2d arrivalFrom{-1, 0};              // from the anchor towards the tape the drone came on
         int anchorTag = -1;                          // the tag the anchor is (-1: the end of a tape without tag)
         int goalTag = -1;                            // the tag at the end of the tape being followed, once it has been seen
         struct TagMem { int id; cv::Point2d p; double seen; bool fresh; cv::Point2d prevP; double prevSeen; };

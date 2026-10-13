@@ -22,6 +22,11 @@ struct LineParams {
     // down to just above the white surface's own saturation (never above the configured limit, never below tapeSMin).
     bool tapeSAuto = false;
     int tapeSMin = 34, tapeSMargin = 22;
+    // ... but what a reflection washes pale is also BRIGHT. The black cells of an AprilTag come out dark and faintly
+    // blue; with the lower limit alone they pass for tape and trace a piece inside the tag (real frames: those pixels
+    // are 0.24-0.40 of the white surface's brightness, the washed tape 0.6-0.75, the tape itself 0.4-0.6). So the
+    // lower limit holds only for pixels at least this bright, as a share of the white level (0 = for all of them).
+    double tapePaleV = 0;
     double minWidthCm = 1.0, maxWidthCm = 8.0;
     int morphOpen = 3, morphClose = 7;
     int minComponentArea = 60;
@@ -88,6 +93,7 @@ private:
     LineParams p_;
     cv::Mat hsv_, mask_, white_;
     int whiteVUsed_ = 0, whiteLevel_ = 0;
+    cv::Mat pale_;
 public:
     int whiteVUsed() const { return whiteVUsed_; }      // the brightness limit the white test worked with in the last frame
     int whiteLevel() const { return whiteLevel_; }      // brightness of the white surface in the last frame (0 = not measured)
