@@ -14,6 +14,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include "control/Navigator.h"
+#include "sim/FlightReplay.h"
 #include "sim/Simulator.h"
 #include "tello/TelloDrone.h"
 #include "util/Log.h"
@@ -234,8 +235,9 @@ int MissionLoop::run() {
             }
         });
     }
+    auto* rec = dynamic_cast<FlightReplay*>(&drone_);   // a recorded flight played back: it says on which frame the mission starts
     if (opt_.autoStart) nav_.start(startAtTag_);
-    else LOG_INFO("Ready. Press 't' in the video window to take off and start (l/space = land, e = emergency, q = quit).");
+    else if (!rec) LOG_INFO("Ready. Press 't' in the video window to take off and start (l/space = land, e = emergency, q = quit).");
 
     SteadyClock wall;
     Frame frame;
@@ -252,6 +254,7 @@ int MissionLoop::run() {
         while (webOn_ && web_->popCommand(wc)) applyWebCommand(wc);
         double tIter0 = wall.now();
         bool got = src_.latest(frame, seq_, 0.25);
+        if (got && rec && rec->startMissionNow()) nav_.start(startAtTag_);
         // On the ground with nothing flying a few pictures a second are plenty: the others are dropped unprocessed
         // (the vision and the page video are most of what the ground station computes).
         if (got && idleFps_ > 0 && !sim_ && !nav_.flying() && !drone_.isFlying()) {
@@ -285,6 +288,7 @@ int MissionLoop::run() {
         if (got) {
             double tp = wall.now();
             obs = perception_.process(frame.image, st, frame.stamp, frame.seq);
+            if (rec) rec->observed(obs);
             const double pm = (wall.now() - tp) * 1000;
             percMs_ += pm; iterMs_ += (wall.now() - tIter0) * 1000; tagMsAcc_ += obs.tagMs; lineMsAcc_ += obs.lineMs; ++perfN_;
             totPercMs_ += pm; totTagMs_ += obs.tagMs; totLineMs_ += obs.lineMs; ++totFrames_;
@@ -757,6 +761,30 @@ int runFly(const Config& cfg, const MissionOptions& opt) {
     web.stop();
     src->stop();
     drone->disconnect();
+    return rc;
+}
+
+// A recorded flight through perception and the navigator, to see what the code decides on real frames before it flies.
+int runReplay(const Config& cfg, const MissionOptions& opt) {
+    if (opt.source.rfind("file:", 0) != 0) { LOG_ERROR("replay --telemetry needs --source file:<video> (the .avi recorded with that csv)"); return 1; }
+    // The .avi holds the frames as perception got them (un-mirrored, the top rows already painted) and every one of
+    // them was looked at. And what a replay works out about the mirror or the drone is not a flight's measurement:
+    // it is never kept for the next start.
+    Config c = cfg;
+    c.set("camera.flip", "none");
+    c.set("camera.blank_top_px", "0");
+    c.set("mission.idle_fps", "0");
+    c.set("ground.learned_file", "");
+    MissionOptions o = opt;
+    o.autoStart = false;          // the mission starts on the frame where the real one did
+    FlightReplay rec(c, o.source.substr(5), o.telemetry, o.realtime);
+    std::string err;
+    if (!rec.start(&err)) { LOG_ERROR("%s", err.c_str()); return 1; }
+    WebServer web;
+    MissionLoop loop(rec, rec, rec, c, o, nullptr, &web);
+    int rc = loop.run();
+    web.stop();
+    rec.stop();
     return rc;
 }
 

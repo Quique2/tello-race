@@ -13,6 +13,7 @@ struct MissionOptions {
     std::vector<std::string> overrides;      // section.key=value
     std::vector<std::string> profiles;       // extra .ini files laid over the main one (a course, a mirror, ...)
     std::string source = "udp";              // udp | file:<path> | camera:<n>
+    std::string telemetry;                   // replay: the csv recorded with the video (the flight is then replayed as flown)
     bool sim = false;
     std::string track = "random";            // random | example
     int episodes = 1;
@@ -40,3 +41,4 @@ bool openLiveSource(const Config& cfg, const MissionOptions& opt, IClock& clock,
 
 int runFly(const Config& cfg, const MissionOptions& opt);   // real drone / replay / dry run
 int runSim(const Config& cfg, const MissionOptions& opt);   // simulator episodes
+int runReplay(const Config& cfg, const MissionOptions& opt);   // a recorded flight (video + telemetry csv) through the navigator
