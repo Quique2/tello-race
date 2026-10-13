@@ -33,6 +33,7 @@ void LineParams::load(const Config& cfg) {
     tapeSMin = cfg.getInt("line.tape_s_min", tapeSMin);
     tapeSMargin = cfg.getInt("line.tape_s_margin", tapeSMargin);
     tapePaleV = cfg.getDouble("line.tape_pale_v", tapePaleV);
+    tapePaleNearCm = cfg.getDouble("line.tape_pale_near_cm", tapePaleNearCm);
     whiteDilatePx = cfg.getInt("line.white_dilate_px", whiteDilatePx);
     minWidthCm = cfg.getDouble("line.min_width_cm", minWidthCm);
     maxWidthCm = cfg.getDouble("line.max_width_cm", maxWidthCm);
@@ -131,8 +132,23 @@ void LineDetector::buildMask(const cv::Mat& bgr, const GroundProjector& proj,
         lo[2] = std::max(12.0, lo[2] * expo);
         cv::inRange(hsv_, lo, hi, mask_);
         lo[1] = sLo;
-        lo[2] = std::max(lo[2], p_.tapePaleV * whiteLevel_);
-        cv::inRange(hsv_, lo, hi, pale_);
+        int near = 0;                               // px: how far "near" reaches at this height
+        if (p_.tapePaleNearCm > 0) {
+            const cv::Vec3d ray = proj.pixelRayBody(proj.K().cx, proj.K().cy);
+            if (ray[2] < -0.05) near = std::min(40, (int)std::lround(p_.tapePaleNearCm / 100.0 / ((proj.height() / -ray[2]) / (proj.K().fx * scale_))));
+        }
+        if (near < 2) {
+            lo[2] = std::max(lo[2], p_.tapePaleV * whiteLevel_);
+            cv::inRange(hsv_, lo, hi, pale_);
+        } else {
+            cv::inRange(hsv_, lo, hi, pale_);
+            cv::extractChannel(hsv_, v_, 2);
+            cv::dilate(v_, vNear_, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(2 * near + 1, 2 * near + 1)));
+            cv::min(vNear_, cv::Scalar(whiteLevel_), vNear_);
+            vNear_.convertTo(vNear_, CV_8U, p_.tapePaleV);
+            cv::compare(v_, vNear_, vNear_, cv::CMP_GE);
+            pale_ &= vNear_;
+        }
         mask_ |= pale_;
     };
     if (p_.colorMode == "blue") {

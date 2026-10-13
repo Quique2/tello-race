@@ -26,6 +26,25 @@ keep it off between tests. Windows laptop: single Wi-Fi radio, home SSID INFINIT
 
 ## Entries
 
+### 2026-10-13 night (laptop) e043a8f went back at tag 1 on the real course and was reverted; replay of recorded flights; the next-tape choice hardened; third nose mode
+* e043a8f (nose steering retuned + two tape-selection changes, 30/30 in the simulator) flew back after tag 1 five
+  real flights out of five. Reverted (814d6d9); the Pi ran c6923c9's code again that evening.
+* New tools, all offline: `tello_race replay --source file:<avi> --telemetry <csv>` plays a RECORD of a real flight
+  through perception and the navigator; `tools/replay_check.py` does it in several pixel variants and says whether
+  the build gets through the flight's tags; the `real camera` block at the end of config/course_tec.ini with
+  `tools/sim_events.py --real-camera` makes the simulated camera show what the real one shows;
+  `tools/camera_vs_sim.py` measures recorded frames against simulated ones.
+* They showed that the code that had flown well was fragile at tags too (a "tape" traced inside tag 1 from its
+  faintly blue dark cells; the arrival tape's end taken for the next tape). Three rules now, set in the profile:
+  `line.tape_pale_v`, `course.next_min_start_m`, `course.arrival_side_cos`. Numbers in docs/COURSE_TEC.md ("The
+  night after"). Recorded frames: 9 of 9 and 5 of 5 where it was 7 of 9 and 1 of 5.
+* Third nose mode `course.heading = lead` (page button NOSE TURNS AHEAD, web command heading=lead): full yaw
+  stick, the nose takes the route's direction ahead and does not look past a tag. fixed and path fly as before.
+* Altitude 1.2 m kept (studied up to 2.0 m: nothing gained, slightly worse above 1.8 m).
+* Nothing of this has flown. Rule for the future, in the doc: a change to how tapes and tags are told apart goes
+  through replay_check and the real-camera simulator before it goes to the drone. Record every flight.
+* Pi: pull + rebuild as usual. The recordings used are on the Pi under logs/run_20261012_1409*, _1834*, _1945*.
+
 ### 2026-10-12 evening (laptop) a recorded real flight; controller rebuilt around the measured response; glare
 * The user asked for a live run: started from the laptop with RECORD on (he was next to the drone). 4/4 tags, 38 s,
   with overshoots and a wobble. Recording on the Pi: `logs/run_20261012_140921.{avi,csv,log}`.

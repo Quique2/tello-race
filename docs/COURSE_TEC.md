@@ -363,15 +363,79 @@ tarp's 95th percentile was 25. The dark floor beyond the tarp stays out of the m
 **After a tag with no next tape in sight** the drone now returns over the tag first and only then rises for a wider
 view (the next tape starts next to the tag).
 
+## The night after: what went wrong with a retune, and what replaying the recordings showed (2026-10-13)
+
+**A retune that passed the simulator 30 / 30 went back at tag 1 on the real course, five flights out of five**
+(commit e043a8f, reverted the same evening). Two of its changes were about telling tapes apart at a tag; the
+simulator saw clean, whole tapes and could not show what they do on real frames. Three things came out of that:
+
+1. **Recorded flights can be replayed through the navigator** (`tello_race replay --source file:run.avi --telemetry
+   run.csv`, `tools/replay_check.py`). The frames and the telemetry of the real flight go through perception and the
+   navigator offline. It is open-loop (the video shows what the drone did then, whatever is commanded now), so what
+   counts is where a build first decides differently, and whether it gets through the flight's tags without trouble.
+   The recorder's MJPG is not what the flight saw, so every recording is replayed in several pixel variants (one
+   more JPEG generation each, on a moved block grid): a decision that changes between them hangs on pixels.
+2. **The simulator can show what the real camera shows** (the `real camera` block at the end of the profile,
+   `tools/sim_events.py --real-camera`): loose tag sheets, the blue-grey black of a tag, block noise and colour
+   errors that stay put, colour carried more coarsely than brightness, a lamp's reflection, the mirror's dark lower
+   edge, the dark floor. With it the retune fails where it failed in reality (9 of 20 in path mode, "flown before"
+   in half of the fixed-mode flights) - and the code that had flown well turns out to be fragile too.
+3. **That code was one pixel from the same mistake.** Replayed on the frames of its own good flight it got through
+   in 7 of 9 pixel variants; on the frames of the failed flight it chose the right tape after tag 1 in 1 of 5. Two
+   causes, both at a tag:
+   * the dark cells of a tag are faintly blue to the camera. Since `line.tape_s_auto` lowered the saturation limit
+     (for the tape under a reflection) they could pass for tape, and a 12 cm "next tape" was traced inside tag 1;
+   * the tape the drone came on was recognised by the direction of travel at the moment the tag is reached. A corner
+     just before the tag, a nose turned 45 degrees, or the thinning losing the tape's last piece (it does when that
+     piece lies at 30 - 60 degrees to the drone's axes) and the arrival tape's end became the "next tape".
+
+What was changed (all three off unless set; the profile sets them):
+
+* `line.tape_pale_v = 0.45`: the lower saturation limit holds only for pixels at least that bright, as a share of
+  the white within 4 cm of them (`line.tape_pale_near_cm`; near, because the picture is shaded along the mirror's
+  lower edge, tape and tarp alike). Measured on the three recordings, as a share of the tarp's brightness: tape
+  under a reflection 0.60 - 0.75, the tape itself 0.4 - 0.6, the dark cells of a tag 0.24 - 0.40;
+* `course.next_min_start_m = 0.07`: nothing that starts inside the tag is a tape;
+* `course.arrival_side_cos = 0.7`: nothing that starts on the side of the tag the drone came from is the next tape.
+  That side is where the point of the followed tape 15 cm behind the drone lies, as seen from the tag; it holds the
+  tape the drone came on, in however many pieces, and does not depend on which way the drone points or moves.
+
+| | on the Pi until now | with the three rules |
+|---|---|---|
+| frames of the good real flight, 9 pixel variants: all four tags, no trouble | 7 of 9 | 9 of 9 (also with the nose fixed or turning ahead) |
+| frames of the failed real flight, 5 pixel variants: the right tape after tag 1 | 1 of 5 | 5 of 5 |
+| simulator with the real camera, later flights (20 each) | fixed 17 of 20, path 19 of 20 | fixed 20, path 20, lead 20 of 20 |
+| the same, first flights (20 each) | | fixed 20, path 20, lead 20 of 20 |
+
+Simulator with the clean camera, 30 flights each:
+
+| | finished | course time | path error mean / worst moment |
+|---|---|---|---|
+| fixed, later flights | 30 / 30 | 26.5 s | 3.2 cm / 11.5 cm |
+| path, later flights | 30 / 30 | 26.9 s | 3.5 cm / 12.8 cm |
+| lead, later flights | 30 / 30 | 31.8 s | 3.8 cm / 14.1 cm |
+| fixed, first flight | 30 / 30 | 34.2 s | 3.3 cm / 14.8 cm |
+| path, first flight | 29 / 30 (one passed tag 3 at 16 cm, 1 cm outside the simulator's limit) | 34.9 s | 3.9 cm / 13.1 cm |
+| lead, first flight | 30 / 30 | 41.2 s | 3.8 cm / 16.9 cm |
+
+The altitude was looked at again (the net allows 2 m): between 1.2 and 1.5 m nothing changes; at 1.8 - 2.0 m one or
+two flights of twelve fail when the drone is 30 % slower than the model or the mirror angle is 2 degrees off (the
+closest approach to the tags then grows from 4 - 5 to 6 - 7 cm), and the vision costs about twice as much. 1.2 m
+stays.
+
+**Before any change to how tapes and tags are told apart goes to the drone:** it has to get through the recorded
+flights in every pixel variant (`python tools/replay_check.py --clean --strict "logs/run_...: course.heading=path
+course.rc_gain_ms=... ground.mount_verified=1 ..."`) and through the simulator with the real camera
+(`python tools/sim_events.py --real-camera "label: ..."`). Record every real flight (RECORD on the page before
+START): each recording is another test.
+
 ## Not verified on the real drone yet
 
-* everything in "The recorded flight" above: the new controller, the paler tape limit and the return over the tag
-  have flown in the simulator only;
-* the nose-follows-path mode has only flown in the simulator, and how the real drone's yaw answers is not measured
-  (record a flight in that mode: the same fit will tell);
-* the `lead` nose mode has flown in the simulator only. Of the real yaw only the rate is measured (0.65°/s per
-  stick unit, from a flight limited to 40): whether it holds up to a stick of 100, and how late the yaw answers,
-  a recorded flight in that mode will tell.
+* the three rules for choosing the next tape: proven on recorded frames and in the simulator, not flown;
+* the third nose mode (`lead`, NOSE TURNS AHEAD): simulator and recorded frames only;
+* nose fixed with the controller rebuilt on 2026-10-12: the path-mode flight used the same controller underneath,
+  the fixed mode itself has not completed a real course with it;
+* whether small sticks do less than their share (see the first recording).
 
 To record a flight: press RECORD on the page before START (video, telemetry table and log go to `logs/` on the Pi).
 

@@ -27,6 +27,10 @@ struct LineParams {
     // are 0.24-0.40 of the white surface's brightness, the washed tape 0.6-0.75, the tape itself 0.4-0.6). So the
     // lower limit holds only for pixels at least this bright, as a share of the white level (0 = for all of them).
     double tapePaleV = 0;
+    // ... of the white NEAR the pixel (the brightest thing within this many cm), where that is darker than the white of
+    // the whole picture: along the lower edge of the mirror the picture is shaded, tape and tarp alike, and a tape
+    // seen there is as much darker than its surroundings as anywhere else. Inside a tag the white cells are near.
+    double tapePaleNearCm = 4;
     double minWidthCm = 1.0, maxWidthCm = 8.0;
     int morphOpen = 3, morphClose = 7;
     int minComponentArea = 60;
@@ -93,7 +97,7 @@ private:
     LineParams p_;
     cv::Mat hsv_, mask_, white_;
     int whiteVUsed_ = 0, whiteLevel_ = 0;
-    cv::Mat pale_;
+    cv::Mat pale_, v_, vNear_;
 public:
     int whiteVUsed() const { return whiteVUsed_; }      // the brightness limit the white test worked with in the last frame
     int whiteLevel() const { return whiteLevel_; }      // brightness of the white surface in the last frame (0 = not measured)
