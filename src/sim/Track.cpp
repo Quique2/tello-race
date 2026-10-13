@@ -116,6 +116,7 @@ bool TrackBuilder::fromFile(const std::string& path, Track& t, std::string* err)
         else if (key == "start") ss >> t.start.x >> t.start.y >> t.startYawDeg;
         else if (key == "segment") { TrackSegment s; s.pts = parsePoints(ss); if (s.pts.size() >= 2) t.segments.push_back(s); }
         else if (key == "tag") { TrackTag g; ss >> g.id >> g.x >> g.y >> g.yawDeg; t.tags.push_back(g); }
+        else if (key == "tarp") t.tarp = parsePoints(ss);
         else if (key == "distractor") {
             TrackSegment s; s.pts = parsePoints(ss);
             if (s.pts.size() >= 2) { t.distractors.push_back(s); t.distractorColors.push_back(cv::Scalar(0, 210, 240)); t.distractorOnStrip.push_back(false); }
@@ -123,6 +124,29 @@ bool TrackBuilder::fromFile(const std::string& path, Track& t, std::string* err)
     }
     if (t.segments.empty() || t.tags.empty()) { if (err) *err = "the course file " + file + " has no segments or no tags"; return false; }
     return true;
+}
+
+void TrackBuilder::moveTag(Track& t, int id, double dx, double dy) {
+    for (size_t i = 0; i < t.tags.size(); ++i) {
+        TrackTag& g = t.tags[i];
+        if (g.id != id) continue;
+        if (!g.moved) { g.photoX = g.x; g.photoY = g.y; g.moved = true; }
+        g.x += dx; g.y += dy;
+        if (i >= t.segments.size() || t.segments[i].pts.size() < 2) continue;
+        // the reference route ends at the tag: drop what the sheet now covers of the tape, or go on straight to it
+        std::vector<cv::Point2d>& p = t.segments[i].pts;
+        const cv::Point2d q(g.x, g.y);
+        size_t best = 1;
+        double bd = 1e18, bu = 1.0;
+        for (size_t k = 1; k < p.size(); ++k) {
+            const cv::Point2d d = p[k] - p[k - 1];
+            const double l2 = d.dot(d), u = l2 > 1e-12 ? mu::clamp((q - p[k - 1]).dot(d) / l2, 0.0, 1.0) : 0.0;
+            const double dd = cv::norm(q - (p[k - 1] + d * u));
+            if (dd < bd) { bd = dd; best = k; bu = u; }
+        }
+        if (best + 1 < p.size() || bu < 1.0) p.resize(best);
+        p.push_back(q);
+    }
 }
 
 static bool buildRandom(uint64_t seed, double worldSize, Track& t);
@@ -235,7 +259,37 @@ cv::Mat TrackBuilder::render(const Track& t, const TrackStyle& s, const TagDetec
         cv::Mat photo = cv::imread(t.worldImage, cv::IMREAD_COLOR);
         if (!photo.empty()) {
             if (photo.cols != W || photo.rows != W) cv::resize(photo, photo, cv::Size(W, W), 0, 0, cv::INTER_AREA);
+            if (std::fabs(s.floorGain - 1.0) > 1e-3 && t.tarp.size() >= 3) {
+                // The camera exposes for the white tarp: the floor around it, mid-grey in the photo, comes out nearly black.
+                cv::Mat off(W, W, CV_8UC1, cv::Scalar(255)), dim;
+                cv::fillPoly(off, std::vector<std::vector<cv::Point>>{toPx(t, s.pxPerM, t.tarp)}, cv::Scalar(0));
+                photo.convertTo(dim, -1, s.floorGain, 0);
+                dim.copyTo(photo, off);
+            }
             if (t.tagsInImage) return photo;
+            for (const auto& g : t.tags) {
+                if (!g.moved) continue;
+                // the photo still shows the sheet where it lay that day: paint the tarp over it (the colour of the tarp around it)
+                const double h = 0.5 * std::max(t.tagPaperW > 0 ? t.tagPaperW : 0.216, t.tagPaperH > 0 ? t.tagPaperH : 0.279) + 0.01;
+                const cv::Point2d ex = dirVec(g.yawDeg) * h, ey = dirVec(g.yawDeg + 90) * h, c(g.photoX, g.photoY);
+                const std::vector<cv::Point> sheet = toPx(t, s.pxPerM, {c - ex - ey, c + ex - ey, c + ex + ey, c - ex + ey});
+                cv::Mat on(W, W, CV_8UC1, cv::Scalar(0)), around, hsv;
+                cv::fillConvexPoly(on, sheet, cv::Scalar(255));
+                const int ring = std::max(3, (int)std::lround(0.04 * s.pxPerM));
+                cv::dilate(on, around, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(2 * ring + 1, 2 * ring + 1)));
+                cv::Rect box = cv::boundingRect(around) & cv::Rect(0, 0, W, W);
+                cv::cvtColor(photo(box), hsv, cv::COLOR_BGR2HSV);
+                std::vector<double> b, gg, r;
+                for (int y = 0; y < box.height; ++y)
+                    for (int x = 0; x < box.width; ++x) {
+                        if (!around.at<uchar>(box.y + y, box.x + x) || on.at<uchar>(box.y + y, box.x + x)) continue;
+                        const cv::Vec3b q = hsv.at<cv::Vec3b>(y, x);
+                        if (q[1] > 40 || q[2] < 120) continue;                       // tape, or the floor beyond the tarp
+                        const cv::Vec3b px = photo.at<cv::Vec3b>(box.y + y, box.x + x);
+                        b.push_back(px[0]); gg.push_back(px[1]); r.push_back(px[2]);
+                    }
+                if (b.size() > 20) cv::fillConvexPoly(photo, sheet, cv::Scalar(mu::median(b), mu::median(gg), mu::median(r)), cv::LINE_AA);
+            }
             return renderTags(photo, t, s, tags);
         }
     }
@@ -293,6 +347,7 @@ cv::Mat TrackBuilder::renderTags(cv::Mat img, const Track& t, const TrackStyle& 
         cv::Mat paper(paperH, paperW, CV_8UC3, cv::Scalar(250, 250, 250));
         cv::Mat bigC;
         cv::cvtColor(big, bigC, cv::COLOR_GRAY2BGR);
+        if (s.tagBlack != cv::Scalar(0, 0, 0)) bigC.setTo(s.tagBlack, big < 128);
         cv::Rect roi((paperW - tagPx) / 2, (paperH - tagPx) / 2, tagPx, tagPx);
         if (roi.x < 0 || roi.y < 0) { roi = cv::Rect(0, 0, std::min(tagPx, paperW), std::min(tagPx, paperH)); }
         bigC(cv::Rect(0, 0, roi.width, roi.height)).copyTo(paper(roi));

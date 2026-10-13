@@ -37,6 +37,7 @@ void SimParams::load(const Config& c) {
     maxTimeS = c.getDouble("sim.max_time_s", maxTimeS);
     tracePoseS = c.getDouble("sim.trace_pose_s", tracePoseS);
     exposureS = c.getDouble("sim.exposure_s", exposureS);
+    exposureSamples = c.getInt("sim.exposure_samples", exposureSamples);
     startJitterM = c.getDouble("sim.start_jitter_m", startJitterM);
     startYawJitterDeg = c.getDouble("sim.start_yaw_jitter_deg", startYawJitterDeg);
     startYawOffsetDeg = c.getDouble("sim.start_yaw_offset_deg", startYawOffsetDeg);
@@ -49,6 +50,19 @@ void SimParams::load(const Config& c) {
     camAheadM = c.getDouble("sim.camera_ahead_m", camAheadM);
     rcDelayS = c.getDouble("sim.rc_delay_s", rcDelayS);
     inertial = c.getBool("sim.inertial", inertial);
+    glareLamps = c.getDoubleList("sim.glare_lamps", glareLamps);
+    glareSigmaM = c.getDouble("sim.glare_sigma_m", glareSigmaM);
+    glareStrength = c.getDouble("sim.glare_strength", glareStrength);
+    chromaBlurPx = c.getDouble("sim.chroma_blur_px", chromaBlurPx);
+    blockNoiseSigma = c.getDouble("sim.block_noise_sigma", blockNoiseSigma);
+    tintSigma = c.getDouble("sim.tint_sigma", tintSigma);
+    tintPatchM = c.getDouble("sim.tint_patch_m", tintPatchM);
+    tintWideSigma = c.getDouble("sim.tint_wide_sigma", tintWideSigma);
+    tintDriftSigma = c.getDouble("sim.tint_drift_sigma", tintDriftSigma);
+    mirrorEdgePx = c.getDouble("sim.mirror_edge_px", mirrorEdgePx);
+    mirrorEdgeTiltPx = c.getDouble("sim.mirror_edge_tilt_px", mirrorEdgeTiltPx);
+    std::vector<double> ec = c.getDoubleList("sim.mirror_edge_bgr", {});
+    if (ec.size() >= 3) mirrorEdgeColor = cv::Scalar(ec[0], ec[1], ec[2]);
 }
 
 Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackKind, const TagDetector& tagRenderer)
@@ -63,6 +77,9 @@ Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackK
     if (lc.size() >= 3) style_.lineColor = cv::Scalar(lc[0], lc[1], lc[2]);
     std::vector<double> cc = cfg.getDoubleList("sim.carpet_bgr", {118, 108, 100});
     if (cc.size() >= 3) style_.carpet = cv::Scalar(cc[0], cc[1], cc[2]);
+    std::vector<double> tb = cfg.getDoubleList("sim.tag_black_bgr", {});
+    if (tb.size() >= 3) style_.tagBlack = cv::Scalar(tb[0], tb[1], tb[2]);
+    style_.floorGain = cfg.getDouble("sim.floor_gain", 1.0);
     style_.textureSeed = seed;
     if (trackKind == "example") track_ = TrackBuilder::example();
     else if (trackKind == "random" || trackKind.empty()) track_ = TrackBuilder::random(seed, cfg.getDouble("sim.world_size_m", 9.0));
@@ -73,7 +90,22 @@ Simulator::Simulator(const Config& cfg, uint64_t seed, const std::string& trackK
             track_ = TrackBuilder::example();
         } else if (track_.pxPerM > 0) style_.pxPerM = track_.pxPerM;
     }
+    // The sheets of the tags are loose: on the day of a flight they do not lie exactly where the photo has them.
+    const std::vector<double> off = cfg.getDoubleList("sim.tag_offsets", {});
+    for (size_t i = 0; i + 2 < off.size(); i += 3) TrackBuilder::moveTag(track_, (int)std::lround(off[i]), off[i + 1], off[i + 2]);
+    const double paper = cfg.getDouble("sim.tag_paper_m", 0);
+    if (paper > 0) track_.tagPaperW = track_.tagPaperH = paper;
     world_ = TrackBuilder::render(track_, style_, tagRenderer);
+    if (p_.tintSigma > 0 || p_.tintWideSigma > 0) tintWorld();
+    if (p_.glareLamps.size() >= 3) {
+        // a reflection washes the tape towards the white of the floor it lies on: the brightest twentieth of the floor
+        cv::Mat grey;
+        cv::cvtColor(world_, grey, cv::COLOR_BGR2GRAY);
+        int hist[256] = {0}, total = 0, acc = 0;
+        for (int y = 0; y < grey.rows; y += 2)
+            for (int x = 0; x < grey.cols; x += 2) { ++hist[grey.at<uchar>(y, x)]; ++total; }
+        for (int v = 255; v >= 0; --v) { acc += hist[v]; if (acc >= total / 20) { floorWhite_ = v; break; } }
+    }
     route_ = track_.route();
     res_.tagPass.assign(track_.tags.size(), 1e9);
     if (p_.tracePoseS > 0)
@@ -377,6 +409,26 @@ cv::Mat Simulator::render() {
     const Intrinsics& K = truth_.K();
     const int W = K.width, H = K.height;
     if (mapX_.empty()) { mapX_.create(H, W, CV_32F); mapY_.create(H, W, CV_32F); }
+    // How many views the exposure needs: one for every two or three pixels the picture's corner moves in that time.
+    int views = 1;
+    if (p_.exposureS > 0 && p_.exposureSamples > 1) {
+        const double far = z_ * std::hypot(0.5 * W / K.fx, 0.5 * H / K.fy);            // floor distance of a corner of the picture
+        const double moved = (std::hypot(vxB_, vyB_) + std::fabs(mu::deg2rad(yawRate_)) * far) * p_.exposureS * K.fx / std::max(0.05, z_);
+        views = mu::clamp((int)std::ceil(moved / 2.5) + 1, 1, p_.exposureSamples);
+        if (views > 1 && bodyX_.empty()) { bodyX_.create(H, W, CV_32F); bodyY_.create(H, W, CV_32F); }
+    }
+    // A glossy floor mirrors every lamp at the point G where the ray from the lamp to the camera's mirror image crosses
+    // it: G = C + (L - C) * h / (h + hl), with C the point under the camera, h its height and hl the lamp's. The
+    // reflection moves along with the drone, more slowly than the drone does.
+    std::vector<cv::Point2d> glareAt;
+    for (size_t i = 0; i + 2 < p_.glareLamps.size(); i += 3) {
+        const cv::Point2d C(x_ + p_.camAheadM * std::cos(mu::deg2rad(psi_)), y_ + p_.camAheadM * std::sin(mu::deg2rad(psi_)));
+        const double hl = std::max(0.1, p_.glareLamps[i + 2]);
+        glareAt.push_back(C + (cv::Point2d(p_.glareLamps[i], p_.glareLamps[i + 1]) - C) * (z_ / (z_ + hl)));
+    }
+    const bool glare = !glareAt.empty() && p_.glareStrength > 0 && p_.glareSigmaM > 0;
+    if (glare) { glare_.create(H, W, CV_32F); glare_.setTo(0); }
+    const double glareK = -0.5 / std::max(1e-6, p_.glareSigmaM * p_.glareSigmaM), glareR2 = 9.0 * p_.glareSigmaM * p_.glareSigmaM;
     double psi = mu::deg2rad(psi_), c = std::cos(psi), s = std::sin(psi);
     double ppm = style_.pxPerM, half = track_.worldSize * ppm / 2;
     // body_from_cam rotation applied to the per-pixel camera rays
@@ -390,18 +442,30 @@ cv::Mat Simulator::render() {
             double dbx = ex[0] * a + ey[0] * b + ez[0];
             double dby = ex[1] * a + ey[1] * b + ez[1];
             double dbz = ex[2] * a + ey[2] * b + ez[2];
+            if (views > 1) { bodyX_.at<float>(v, u) = 1e6f; bodyY_.at<float>(v, u) = 1e6f; }
             if (dbz > -1e-4) { mx[u] = -1; my[u] = -1; continue; }
             double t = -z_ / dbz;
             if (t > 60.0) { mx[u] = -1; my[u] = -1; continue; }
+            if (views > 1) { bodyX_.at<float>(v, u) = (float)(t * dbx); bodyY_.at<float>(v, u) = (float)(t * dby); }
             double gx = x_ + p_.camAheadM * c + t * (c * dbx - s * dby);
             double gy = y_ + p_.camAheadM * s + t * (s * dbx + c * dby);
             mx[u] = (float)(half + gx * ppm);
             my[u] = (float)(half - gy * ppm);
+            if (glare) {
+                double w = 0;
+                for (const auto& g : glareAt) {
+                    const double d2 = (gx - g.x) * (gx - g.x) + (gy - g.y) * (gy - g.y);
+                    if (d2 < glareR2) w += std::exp(glareK * d2);
+                }
+                if (w > 0) glare_.at<float>(v, u) = (float)w;
+            }
         }
     }
     cv::Mat img;
-    cv::remap(world_, img, mapX_, mapY_, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(75, 70, 62));
-    if (p_.exposureS > 0) {
+    if (views > 1) img = renderExposure(views);
+    else cv::remap(world_, img, mapX_, mapY_, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(75, 70, 62));
+    if (glare) applyGlare(img);
+    if (p_.exposureS > 0 && views == 1) {
         // The floor point at the image centre moves (relative to the drone) by -v * exposure, plus the yaw rate
         // turning it around the drone: smear the frame along that image direction by that many pixels.
         cv::Vec3d ray = truth_.pixelRayBody(K.cx, K.cy);
@@ -424,20 +488,142 @@ cv::Mat Simulator::render() {
                 }
             }
         }
-    } else {
+    } else if (p_.exposureS <= 0) {
         double speed = std::hypot(vxB_, vyB_) + std::fabs(yawRate_) * 0.012;
         int k = 1 + (int)(speed * p_.blurPerMs);
         if (k > 1) cv::blur(img, img, cv::Size(std::min(k, 9), std::min(k, 9)));
     }
+    if (p_.chromaBlurPx > 0) applyChromaBlur(img);
+    if (p_.mirrorEdgePx > 0) applyMirrorEdge(img);
     if (std::fabs(p_.imageGain - 1.0) > 1e-3) img.convertTo(img, -1, p_.imageGain, 0);
-    if (p_.noiseSigma > 0) {
-        cv::Mat f, n(img.size(), CV_32FC3);
+    if (p_.noiseSigma > 0 || p_.blockNoiseSigma > 0 || p_.tintDriftSigma > 0) {
+        cv::Mat f;
         img.convertTo(f, CV_32FC3);
-        cv::randn(n, 0, p_.noiseSigma);
-        f += n;
+        if (p_.noiseSigma > 0) {
+            cv::Mat n(img.size(), CV_32FC3);
+            cv::randn(n, 0, p_.noiseSigma);
+            f += n;
+        }
+        if (p_.blockNoiseSigma > 0) addBlockNoise(f);
+        if (p_.tintDriftSigma > 0) {
+            // the white balance hunts: the whole picture a little bluer or greener, changing over about a second
+            const double keep = std::exp(-1.0 / (0.7 * p_.fps));
+            tintDrift_ = keep * tintDrift_ + std::sqrt(1.0 - keep * keep) * cv::theRNG().gaussian(p_.tintDriftSigma);
+            f += cv::Scalar(tintDrift_, 0, 0);
+        }
         f.convertTo(img, CV_8UC3);
     }
     return img;
+}
+
+// The picture gathers light for the whole exposure while the drone flies on and its nose turns: the mean of the views
+// from the beginning of the exposure to its end. A point far from the drone is carried further by a turn than one
+// under it, which one smear for the whole picture cannot show.
+cv::Mat Simulator::renderExposure(int n) {
+    const double ppm = style_.pxPerM, half = track_.worldSize * ppm / 2;
+    const double psiNow = mu::deg2rad(psi_);
+    const double vxW = vxB_ * std::cos(psiNow) - vyB_ * std::sin(psiNow), vyW = vxB_ * std::sin(psiNow) + vyB_ * std::cos(psiNow);
+    cv::Mat sum, view, mx, my;
+    for (int k = 0; k < n; ++k) {
+        const double back = p_.exposureS * k / (n - 1);                                 // this long before the end of the exposure
+        const double psi = mu::deg2rad(psi_ - yawRate_ * back), c = std::cos(psi), s = std::sin(psi);
+        const double cx = x_ - vxW * back + p_.camAheadM * c, cy = y_ - vyW * back + p_.camAheadM * s;
+        cv::addWeighted(bodyX_, c * ppm, bodyY_, -s * ppm, half + cx * ppm, mx);
+        cv::addWeighted(bodyX_, -s * ppm, bodyY_, -c * ppm, half - cy * ppm, my);
+        cv::remap(world_, view, mx, my, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(75, 70, 62));
+        if (sum.empty()) sum = cv::Mat::zeros(view.size(), CV_32FC3);
+        cv::accumulate(view, sum);
+    }
+    cv::Mat img;
+    sum.convertTo(img, CV_8UC3, 1.0 / n);
+    return img;
+}
+
+// The tape is glossy, the tarp and the paper of the tags are not: only what has a colour is washed out, towards the
+// white of the floor. (On the recorded frames the tape under the lamp keeps its hue, loses two thirds of its
+// saturation and comes up to four fifths of the tarp's brightness; the tarp next to it does not change.)
+void Simulator::applyGlare(cv::Mat& img) const {
+    for (int v = 0; v < img.rows; ++v) {
+        const float* g = glare_.ptr<float>(v);
+        cv::Vec3b* px = img.ptr<cv::Vec3b>(v);
+        for (int u = 0; u < img.cols; ++u) {
+            if (g[u] < 0.02f) continue;
+            cv::Vec3b& q = px[u];
+            const int hi = std::max(q[0], std::max(q[1], q[2])), lo = std::min(q[0], std::min(q[1], q[2]));
+            const double a = std::min(1.0, p_.glareStrength * g[u]) * mu::clamp((hi - lo - 20) / 40.0, 0.0, 1.0);
+            if (a <= 0) continue;
+            for (int k = 0; k < 3; ++k) q[k] = cv::saturate_cast<uchar>(q[k] + a * (floorWhite_ - q[k]));
+        }
+    }
+}
+
+// The video carries colour at half the resolution of brightness, and smooths it more: next to a tape the white floor
+// keeps a breath of the tape's colour for some pixels beyond where it stops being dark. Seen from above that haze
+// closes the two centimetres of white paper between the end of a tape and the black of the tag it ends at.
+void Simulator::applyChromaBlur(cv::Mat& img) const {
+    cv::Mat f, ycc;
+    img.convertTo(f, CV_32FC3);            // in whole levels the way there and back would tint every dark grey by a level
+    cv::cvtColor(f, ycc, cv::COLOR_BGR2YCrCb);
+    std::vector<cv::Mat> ch;
+    cv::split(ycc, ch);
+    cv::GaussianBlur(ch[1], ch[1], cv::Size(0, 0), p_.chromaBlurPx);
+    cv::GaussianBlur(ch[2], ch[2], cv::Size(0, 0), p_.chromaBlurPx);
+    cv::merge(ch, ycc);
+    cv::cvtColor(ycc, f, cv::COLOR_YCrCb2BGR);
+    f.convertTo(img, CV_8UC3);
+}
+
+// The camera looks into the mirror past the mirror's lower edge. Out of focus, that edge is a dark veil over the
+// last rows of the picture: nothing at the upper end of the band, nearly opaque in the last row. A tape that runs out
+// of the bottom of the picture fades away in it before it reaches the border.
+void Simulator::applyMirrorEdge(cv::Mat& img) const {
+    const int W = img.cols, H = img.rows;
+    for (int u = 0; u < W; ++u) {
+        const double band = p_.mirrorEdgePx + p_.mirrorEdgeTiltPx * ((double)u / (W - 1) - 0.5);
+        if (band < 1) continue;
+        for (int v = std::max(0, (int)std::ceil(H - band)); v < H; ++v) {
+            const double a = 0.95 * std::pow((v - (H - band)) / band, 1.3);
+            cv::Vec3b& q = img.at<cv::Vec3b>(v, u);
+            for (int k = 0; k < 3; ++k) q[k] = cv::saturate_cast<uchar>(q[k] + a * (p_.mirrorEdgeColor[k] - q[k]));
+        }
+    }
+}
+
+// Video compression works in 8x8 pixel blocks and keeps the colour of each only roughly: on a plain surface every
+// block comes out a little off as a whole. That is far less noise than the sensor's, but it does not average out
+// over a few pixels: a patch of dark grey can turn bluish, all of it. Every picture is coded as a correction of the
+// one before, so an error outlives its picture: most of it is still there in the next.
+void Simulator::addBlockNoise(cv::Mat& f) {
+    cv::Mat coarse((f.rows + 7) / 8, (f.cols + 7) / 8, CV_32FC3), fine;
+    cv::randn(coarse, 0, p_.blockNoiseSigma);
+    const double keep = 0.7;
+    if (blockNoise_.size() == coarse.size()) cv::addWeighted(blockNoise_, keep, coarse, std::sqrt(1.0 - keep * keep), 0, coarse);
+    blockNoise_ = coarse;
+    cv::resize(coarse, fine, cv::Size(coarse.cols * 8, coarse.rows * 8), 0, 0, cv::INTER_NEAREST);
+    f += fine(cv::Rect(0, 0, f.cols, f.rows));
+}
+
+// The colour of the floor as the camera gives it is uneven in a way that stays put on the floor: the light differs
+// from one end of the course to the other, and what the video coding gets wrong travels along with the things it
+// sits on. A level or two of blue against green, nothing to the eye: but it is what decides whether the dark grey of
+// a tag is taken for cyan or for blue tape, and it makes the same patches of a tag pass for tape frame after frame.
+void Simulator::tintWorld() {
+    cv::RNG rng(seed_ * 0x9E3779B97F4A7C15ULL + 77);
+    cv::Mat tint = cv::Mat::zeros(world_.size(), CV_32F);
+    auto add = [&](double cellM, double sigma) {
+        if (sigma <= 0) return;
+        const int n = std::max(2, (int)std::ceil(track_.worldSize / std::max(1e-3, cellM)) + 1);
+        cv::Mat grid(n, n, CV_32F), big;
+        rng.fill(grid, cv::RNG::NORMAL, 0.0, sigma);
+        cv::resize(grid, big, world_.size(), 0, 0, cv::INTER_CUBIC);
+        tint += big;
+    };
+    add(p_.tintPatchM, p_.tintSigma);
+    add(0.6, p_.tintWideSigma);
+    std::vector<cv::Mat> ch;
+    cv::split(world_, ch);
+    cv::add(ch[0], tint, ch[0], cv::noArray(), CV_8U);
+    cv::merge(ch, world_);
 }
 
 bool Simulator::latest(Frame& out, uint64_t, double) {
