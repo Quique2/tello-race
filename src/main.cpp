@@ -25,6 +25,8 @@ static void usage() {
         "  --profile <file>       lay another .ini over the configuration, e.g. config/course_tec.ini (repeatable)\n"
         "  --set sec.key=value    override a configuration value (repeatable)\n"
         "  --source <spec>        udp (default) | file:<video> | camera:<index>\n"
+        "  --telemetry <csv>      replay: the .csv recorded with that video; the flight is then replayed as it was flown\n"
+        "                         (its frames, telemetry and timing; give the settings it started with via --set)\n"
         "  --dry-run              fly: connect for video/telemetry but never send flight commands\n"
         "  --start-at-tag <1-3>   resume from a checkpoint: the drone stands on that tag\n"
         "  --auto-start           take off immediately (sim default)\n"
@@ -69,6 +71,7 @@ int main(int argc, char** argv) {
         else if (a == "--set") opt.overrides.push_back(next("--set"));
         else if (a == "--profile") opt.profiles.push_back(next("--profile"));
         else if (a == "--source") opt.source = next("--source");
+        else if (a == "--telemetry") opt.telemetry = next("--telemetry");
         else if (a == "--dry-run") opt.dryRun = true;
         else if (a == "--start-at-tag") opt.startAtTag = atoi(next("--start-at-tag").c_str());
         else if (a == "--auto-start") opt.autoStart = true;
@@ -113,6 +116,7 @@ int main(int argc, char** argv) {
         for (auto& o : opt.overrides)
             if (!probe.setFromArg(o, &err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
         std::string learned = probe.getString("ground.learned_file", "");
+        if (!opt.telemetry.empty()) learned.clear();   // a recorded flight is replayed with what IT started with (--set), not with what is known today
         const bool use = !learned.empty() && (cmd != "sim" || probe.getBool("sim.use_learned", false));
         if (use) {
             if (learned.find_first_of("/\\") == std::string::npos) {     // a bare name lives next to the main configuration file
@@ -137,6 +141,7 @@ int main(int argc, char** argv) {
     if (cmd == "fly") return runFly(cfg, opt);
     if (cmd == "replay") {
         if (opt.source == "udp") { fprintf(stderr, "replay needs --source file:<video>\n"); return 1; }
+        if (!opt.telemetry.empty()) return runReplay(cfg, opt);
         opt.dryRun = true;
         opt.autoStart = true;
         return runFly(cfg, opt);

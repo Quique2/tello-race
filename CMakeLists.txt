@@ -77,6 +77,7 @@ set(SRC
   src/control/NavigatorCourse.cpp
   src/sim/Track.cpp
   src/sim/Simulator.cpp
+  src/sim/FlightReplay.cpp
   src/app/Mission.cpp
   src/app/Tools.cpp
   src/app/WebServer.cpp
